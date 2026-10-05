@@ -1,4 +1,5 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Haptics from "expo-haptics";
 import { useRef, useState } from 'react';
 import {
   Button,
@@ -38,6 +39,7 @@ export default function NuevoReporteScreen() {
     const resultado = await cameraRef.current.takePictureAsync();
 
     if (resultado?.uri) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setFoto(resultado.uri);
       setMostrarCamara(false);
     }
@@ -101,7 +103,7 @@ export default function NuevoReporteScreen() {
           />
 
           <ThemedText style={styles.successText}>
-            ✓ Foto tomada correctamente
+            Foto tomada correctamente
           </ThemedText>
 
           <Button
@@ -185,4 +187,4 @@ const styles = StyleSheet.create({
   successText: {
     fontWeight: 'bold',
   },
-});
+}); 
