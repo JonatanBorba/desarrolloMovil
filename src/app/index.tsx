@@ -7,12 +7,14 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  useColorScheme,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function HomeScreen() {
   const [mostrarSplash, setMostrarSplash] = useState(true);
+  const esOscuro = useColorScheme() === "dark";
 
   useEffect(() => {
     // Temporizador de 2000 ms (2 segundos)
@@ -28,7 +30,7 @@ export default function HomeScreen() {
     return (
       <View style={styles.splashContainer}>
         <Image
-          source={require("../../assets/images/inicio.png")}
+          source={require("../../assets/images/imagen_inicio.png")}
           style={styles.splashImagen}
         />
       </View>
@@ -46,7 +48,11 @@ export default function HomeScreen() {
           {/* Logo en la pantalla principal */}
           <View style={styles.imageContainer}>
             <Image
-              source={require("../../assets/images/LogoMunicipio.png")}
+              source={
+                esOscuro
+                  ? require("../../assets/images/escudo-blanco.png")
+                  : require("../../assets/images/logo-escudo-transparente.png")
+              }
               style={styles.imagen}
             />
           </View>
@@ -112,7 +118,7 @@ const styles = StyleSheet.create({
   // Estilos de la Pantalla Splash a pantalla completa
   splashContainer: {
     flex: 1,
-    backgroundColor: "#0084C7", // Azul de fondo coincidente con la imagen
+    backgroundColor: "#0C5376", // Azul de fondo coincidente con la imagen
     justifyContent: "center",
     alignItems: "center",
   },
