@@ -1,18 +1,26 @@
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioPlayer, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from "expo-haptics";
 import { useRef, useState } from 'react';
 import {
+  Alert,
   Button,
   Image,
+  Linking,
   StyleSheet,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
 export default function NuevoReporteScreen() {
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [mostrarAjustesMicrofono, setMostrarAjustesMicrofono] = useState(false);
+  const audioPlayer = useAudioPlayer(audioUri);
   const [permission, requestPermission] = useCameraPermissions();
   const [mostrarCamara, setMostrarCamara] = useState(false);
   const [foto, setFoto] = useState<string | null>(null);
@@ -42,6 +50,85 @@ export default function NuevoReporteScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setFoto(resultado.uri);
       setMostrarCamara(false);
+    }
+
+  };
+   
+  const grabarAudio = async () => {
+    try {
+      const permiso = await requestRecordingPermissionsAsync();
+      
+      if (!permiso.granted) {
+        setMostrarAjustesMicrofono(false);
+
+        Alert.alert(
+          'Para grabar el audio, necesitás habilitar el acceso al micrófono.',
+          undefined,
+          [
+            {
+              text: 'OK',
+              onPress: () => setMostrarAjustesMicrofono(true),
+            },
+          ],
+          
+        ); 
+
+        return;
+
+      }
+      
+      setMostrarAjustesMicrofono(false);
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+
+
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+    } catch (error) {
+      console.error('Error al iniciar la grabación:', error);
+      
+      Alert.alert(
+       'No se pudo grabar',
+       'Ocurrió un problema al iniciar la grabación. Verificá el permiso del micrófono e intentá nuevamente.'
+      );
+
+    }
+  };
+
+  const detenerAudio = async () => {
+    try {
+      await audioRecorder.stop();
+
+      const uri = audioRecorder.uri;
+
+      if (uri) {
+         setAudioUri(uri);
+         audioPlayer.replace({ uri });
+        }
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+    });
+    } catch (error) {
+     console.error('Error al detener la grabación:', error);
+     Alert.alert('Error', 'No se pudo detener la grabación.');
+    }
+  };
+
+  const reproducirAudio = async () => {
+    if (!audioUri) {
+      return;
+    }
+
+    try {
+      await audioPlayer.seekTo(0);
+      audioPlayer.play();
+    } catch (error) {
+      console.error('Error al reproducir el audio:', error);
+      Alert.alert('Error', 'No se pudo reproducir el audio.');
     }
   };
 
@@ -89,6 +176,32 @@ export default function NuevoReporteScreen() {
         title={foto ? 'Tomar otra foto' : 'Tomar foto'}
         onPress={abrirCamara}
       />
+        
+      <View style={styles.audioContainer}>
+       <ThemedText type="subtitle">Audio del problema</ThemedText>
+
+       {!recorderState.isRecording ? (
+         <Button title="Grabar audio" onPress={grabarAudio} />
+       ) : (
+         <Button title="Detener grabación" onPress={detenerAudio} />
+       )}
+        {mostrarAjustesMicrofono && (
+          <Button
+           title="Abrir ajustes del micrófono"
+           onPress={() => Linking.openSettings()}
+         />
+       )}
+      
+       {audioUri && (
+         <Button title="Reproducir audio" onPress={reproducirAudio} />
+       )}
+
+       {recorderState.isRecording && (
+         <ThemedText style={styles.recordingText}>
+           Grabando audio...
+         </ThemedText>
+       )}
+     </View>
 
       {foto && (
         <View style={styles.previewContainer}>
@@ -107,13 +220,11 @@ export default function NuevoReporteScreen() {
           </ThemedText>
 
           <Button
-          title="Continuar"
-          onPress={() => {
+            title="Continuar"
+            onPress={() => {
             // Próximamente: continuar con el formulario del reporte
           }}
-        />
-
-
+         />
         </View>
       )}
     </ThemedView>
@@ -187,4 +298,16 @@ const styles = StyleSheet.create({
   successText: {
     fontWeight: 'bold',
   },
+
+  audioContainer: {
+   gap: 12,
+   marginTop: 8,
+
+  },
+  recordingText: {
+   color: 'red',
+   fontWeight: 'bold',
+
+  },
+
 }); 

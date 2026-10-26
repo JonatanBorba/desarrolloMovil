@@ -37,7 +37,8 @@
           "cameraPermission": "Permitir que Reporte Ciudadano use la cámara para adjuntar fotos a los reportes."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,
