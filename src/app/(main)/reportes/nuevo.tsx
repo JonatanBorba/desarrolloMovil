@@ -1,4 +1,10 @@
-
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -34,6 +40,9 @@ const tiposProblema = [
 export default function NuevoReporteScreen() {
   const [permission, requestPermission] = useCameraPermissions();
 
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
+
   const [mostrarCamara, setMostrarCamara] = useState(false);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
@@ -44,6 +53,8 @@ export default function NuevoReporteScreen() {
 
   const [tipoProblema, setTipoProblema] = useState('');
   const [descripcion, setDescripcion] = useState('');
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [procesandoAudio, setProcesandoAudio] = useState(false);
 
   const [coordenadas, setCoordenadas] = useState<{
     latitude: number;
@@ -51,9 +62,84 @@ export default function NuevoReporteScreen() {
   } | null>(null);
 
   const [cargandoUbicacion, setCargandoUbicacion] = useState(false);
+  const [direccion, setDireccion] = useState('');
   const [guardandoReporte, setGuardandoReporte] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
+
+  const iniciarGrabacion = async () => {
+    if (procesandoAudio || recorderState.isRecording) {
+      return;
+    }
+
+    try {
+      setProcesandoAudio(true);
+
+      const permiso =
+        await AudioModule.requestRecordingPermissionsAsync();
+
+      if (!permiso.granted) {
+        Alert.alert(
+          'Permiso necesario',
+          'Necesitás permitir el acceso al micrófono para grabar la descripción.'
+        );
+        return;
+      }
+
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+    } catch (error) {
+      console.error('Error al iniciar la grabación:', error);
+      Alert.alert('Error', 'No se pudo iniciar la grabación de audio.');
+    } finally {
+      setProcesandoAudio(false);
+    }
+  };
+
+  const detenerGrabacion = async () => {
+    if (procesandoAudio || !recorderState.isRecording) {
+      return;
+    }
+
+    try {
+      setProcesandoAudio(true);
+
+      await audioRecorder.stop();
+
+      const uriGrabacion = audioRecorder.uri;
+
+      if (uriGrabacion) {
+        setAudioUri(uriGrabacion);
+        await Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Success
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          'La grabación terminó, pero no se encontró el archivo de audio.'
+        );
+      }
+
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+      });
+    } catch (error) {
+      console.error('Error al detener la grabación:', error);
+      Alert.alert('Error', 'No se pudo finalizar la grabación.');
+    } finally {
+      setProcesandoAudio(false);
+    }
+  };
+
+  const eliminarGrabacion = () => {
+    setAudioUri(null);
+  };
 
   const abrirCamara = async (esSegundaFoto = false) => {
     if (!permission?.granted) {
@@ -139,56 +225,104 @@ export default function NuevoReporteScreen() {
     }
   };
 
-  const obtenerUbicacion = async () => {
-    try {
-      setCargandoUbicacion(true);
 
-      const permiso =
-        await Location.requestForegroundPermissionsAsync();
+const obtenerUbicacion = async () => {
+  try {
+    setCargandoUbicacion(true);
 
-      if (!permiso.granted) {
-        Alert.alert(
-          'Permiso de ubicación',
-          'No se autorizó el acceso a la ubicación. Podés volver a intentarlo.'
-        );
-        return;
-      }
+    const permiso =
+      await Location.requestForegroundPermissionsAsync();
 
-      const serviciosActivos = await Location.hasServicesEnabledAsync();
-
-      if (!serviciosActivos) {
-        Alert.alert(
-          'GPS desactivado',
-          'Activá la ubicación del dispositivo e intentá nuevamente.'
-        );
-        return;
-      }
-
-      const ubicacion = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      setCoordenadas({
-        latitude: ubicacion.coords.latitude,
-        longitude: ubicacion.coords.longitude,
-      });
-
-      await Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Success
-      );
-    } catch (error) {
-      console.error('Error al obtener la ubicación:', error);
+    if (!permiso.granted) {
       Alert.alert(
-        'Error',
-        'No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.'
+        'Permiso de ubicación',
+        'No se autorizó el acceso a la ubicación. Podés volver a intentarlo.'
       );
-    } finally {
-      setCargandoUbicacion(false);
+      return;
     }
-  };
+
+    const serviciosActivos = await Location.hasServicesEnabledAsync();
+
+    if (!serviciosActivos) {
+      Alert.alert(
+        'GPS desactivado',
+        'Activá la ubicación del dispositivo e intentá nuevamente.'
+      );
+      return;
+    }
+
+    const ubicacion = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+
+    const latitud = ubicacion.coords.latitude;
+    const longitud = ubicacion.coords.longitude;
+
+    setCoordenadas({
+      latitude: latitud,
+      longitude: longitud,
+    });
+
+    // Intentar obtener una dirección a partir de las coordenadas.
+    try {
+      const direcciones = await Location.reverseGeocodeAsync({
+        latitude: latitud,
+        longitude: longitud,
+      });
+
+      if (direcciones.length > 0) {
+        const resultado = direcciones[0];
+
+        const partes = [
+          resultado.street,
+          resultado.streetNumber,
+          resultado.district,
+          resultado.city,
+          resultado.region,
+        ].filter(Boolean);
+
+        setDireccion(
+          partes.length > 0
+            ? partes.join(', ')
+            : 'Dirección no disponible; se guardarán las coordenadas GPS.'
+        );
+      } else {
+        setDireccion(
+          'Dirección no disponible; se guardarán las coordenadas GPS.'
+        );
+      }
+    } catch (error) {
+      console.warn('No se pudo identificar la dirección:', error);
+      setDireccion(
+        'Dirección no disponible; se guardarán las coordenadas GPS.'
+      );
+    }
+
+    await Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success
+    );
+  } catch (error) {
+    console.error('Error al obtener la ubicación:', error);
+    Alert.alert(
+      'Error',
+      'No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.'
+    );
+  } finally {
+    setCargandoUbicacion(false);
+  }
+};
+
 
   const guardarNuevoReporte = async () => {
     if (guardandoReporte) {
+      return;
+    }
+
+    if (recorderState.isRecording) {
+      Alert.alert(
+        'Grabación en curso',
+        'Detené la grabación antes de guardar el reporte.'
+      );
       return;
     }
 
@@ -227,11 +361,11 @@ export default function NuevoReporteScreen() {
         codigoSeguimiento: `RC-${Date.now().toString().slice(-8)}`,
         tipo: tipoProblema,
         descripcionTexto: descripcion.trim(),
-        descripcionAudioUrlLocal: null,
+        descripcionAudioUrlLocal: audioUri,
         descripcionAudioUrlRemota: null,
         latitud: coordenadas.latitude,
         longitud: coordenadas.longitude,
-        direccionDescripcion: 'Dirección pendiente de identificar',
+        direccionDescripcion: direccion,
         fotoPrincipalUrlLocal: foto,
         fotoPrincipalUrlRemota: null,
         fotoSecundariaUrlLocal: fotoSecundaria,
@@ -272,9 +406,12 @@ export default function NuevoReporteScreen() {
               setFotoSecundaria(null);
               setTipoProblema('');
               setDescripcion('');
+              setAudioUri(null);
               setCoordenadas(null);
+              setDireccion('');
               setMostrarUbicacion(false);
               setMostrarFormulario(false);
+              
             },
           },
         ]
@@ -291,7 +428,6 @@ export default function NuevoReporteScreen() {
     }
   };
 
-  // Pantalla de cámara
   if (mostrarCamara) {
     return (
       <View style={styles.cameraContainer}>
@@ -324,7 +460,6 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla de ubicación GPS
   if (mostrarUbicacion) {
     return (
       <ThemedView style={styles.container}>
@@ -332,9 +467,7 @@ export default function NuevoReporteScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <ThemedText type="title">
-            Ubicación del problema
-          </ThemedText>
+          <ThemedText type="title">Ubicación del problema</ThemedText>
 
           <ThemedText style={styles.description}>
             Indicá dónde se encuentra el problema para que el municipio
@@ -375,6 +508,21 @@ export default function NuevoReporteScreen() {
                 <ThemedText>
                   Longitud: {coordenadas.longitude.toFixed(6)}
                 </ThemedText>
+
+                <ThemedText type="subtitle">Dirección del problema</ThemedText>
+
+                <TextInput
+                  style={styles.descriptionInput}
+                  placeholder="Ej.: calle Urquiza 450, Gualeguaychú"
+                  placeholderTextColor="#777777"
+                  value={direccion}
+                  onChangeText={setDireccion}
+                  maxLength={200}
+                />
+
+                <ThemedText style={styles.helpText}>
+                  Podés corregir la dirección. Las coordenadas GPS se conservan.
+                </ThemedText>
               </View>
             )}
           </View>
@@ -386,7 +534,9 @@ export default function NuevoReporteScreen() {
           />
 
           <Button
-            title={guardandoReporte ? 'Guardando reporte...' : 'Guardar reporte'}
+            title={
+              guardandoReporte ? 'Guardando reporte...' : 'Guardar reporte'
+            }
             disabled={!coordenadas || guardandoReporte}
             onPress={guardarNuevoReporte}
           />
@@ -395,7 +545,6 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla de datos del reporte
   if (mostrarFormulario) {
     return (
       <ThemedView style={styles.container}>
@@ -404,18 +553,14 @@ export default function NuevoReporteScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <ThemedText type="title">
-            Datos del reporte
-          </ThemedText>
+          <ThemedText type="title">Datos del reporte</ThemedText>
 
           <ThemedText style={styles.description}>
             Contanos qué problema encontraste para que el municipio pueda
             identificarlo.
           </ThemedText>
 
-          <ThemedText type="subtitle">
-            Tipo de problema *
-          </ThemedText>
+          <ThemedText type="subtitle">Tipo de problema *</ThemedText>
 
           <View style={styles.tiposContainer}>
             {tiposProblema.map((tipo) => (
@@ -439,9 +584,7 @@ export default function NuevoReporteScreen() {
             ))}
           </View>
 
-          <ThemedText type="subtitle">
-            Descripción *
-          </ThemedText>
+          <ThemedText type="subtitle">Descripción *</ThemedText>
 
           <TextInput
             style={styles.descriptionInput}
@@ -458,8 +601,52 @@ export default function NuevoReporteScreen() {
             {descripcion.length}/1000 caracteres
           </ThemedText>
 
+          <View style={styles.audioContainer}>
+            <ThemedText type="subtitle">
+              Descripción por audio (opcional)
+            </ThemedText>
+
+            <ThemedText>
+              Podés grabar una explicación del problema usando el micrófono.
+            </ThemedText>
+
+            {recorderState.isRecording ? (
+              <>
+                <ThemedText style={styles.recordingText}>
+                  ● Grabando audio...
+                </ThemedText>
+                <Button
+                  title="Detener grabación"
+                  disabled={procesandoAudio}
+                  onPress={detenerGrabacion}
+                />
+              </>
+            ) : (
+              <Button
+                title={
+                  audioUri ? 'Grabar audio nuevamente' : 'Grabar audio'
+                }
+                disabled={procesandoAudio || guardandoReporte}
+                onPress={iniciarGrabacion}
+              />
+            )}
+
+            {audioUri && !recorderState.isRecording && (
+              <>
+                <ThemedText style={styles.successText}>
+                  ✓ Audio grabado y listo para adjuntar
+                </ThemedText>
+                <Button
+                  title="Eliminar audio"
+                  disabled={procesandoAudio || guardandoReporte}
+                  onPress={eliminarGrabacion}
+                />
+              </>
+            )}
+          </View>
+
           <ThemedText style={styles.helpText}>
-            Los campos marcados con * son obligatorios.
+            Los campos marcados con * son obligatorios. El audio es opcional.
           </ThemedText>
 
           <Button
@@ -469,7 +656,12 @@ export default function NuevoReporteScreen() {
 
           <Button
             title="Continuar a la ubicación"
-            disabled={!tipoProblema || descripcion.trim().length < 10}
+            disabled={
+              !tipoProblema ||
+              descripcion.trim().length < 10 ||
+              recorderState.isRecording ||
+              procesandoAudio
+            }
             onPress={() => {
               if (descripcion.trim().length < 10) {
                 Alert.alert(
@@ -487,16 +679,13 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla inicial: fotos del reporte
   return (
     <ThemedView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <ThemedText type="title">
-          Nuevo reporte
-        </ThemedText>
+        <ThemedText type="title">Nuevo reporte</ThemedText>
 
         <ThemedText style={styles.description}>
           Para crear un reporte necesitás adjuntar una foto del problema.
@@ -667,6 +856,20 @@ const styles = StyleSheet.create({
 
   successText: {
     fontWeight: 'bold',
+  },
+
+  recordingText: {
+    color: '#D32F2F',
+    fontWeight: 'bold',
+  },
+
+  audioContainer: {
+    marginTop: 8,
+    gap: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#777777',
+    borderRadius: 10,
   },
 
   coordinatesContainer: {
