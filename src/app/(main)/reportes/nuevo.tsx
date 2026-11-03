@@ -1,3 +1,4 @@
+
 import {
   AudioModule,
   RecordingPresets,
@@ -6,6 +7,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -36,6 +38,38 @@ const tiposProblema = [
   'Veredas',
   'Otro',
 ];
+
+/**
+ * Copia un archivo al almacenamiento permanente de la aplicación.
+ */
+async function guardarArchivoLocal(
+  uri: string | null,
+  nombreBase: string,
+  extensionPredeterminada: string
+): Promise<string | null> {
+  if (!uri) {
+    return null;
+  }
+
+  const directorio = FileSystem.documentDirectory;
+
+  if (!directorio) {
+    throw new Error('No se encontró el directorio de almacenamiento.');
+  }
+
+  const extension =
+    uri.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/)?.[1] ??
+    extensionPredeterminada;
+
+  const destino = `${directorio}${nombreBase}.${extension}`;
+
+  await FileSystem.copyAsync({
+    from: uri,
+    to: destino,
+  });
+
+  return destino;
+}
 
 export default function NuevoReporteScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -225,93 +259,91 @@ export default function NuevoReporteScreen() {
     }
   };
 
-
-const obtenerUbicacion = async () => {
-  try {
-    setCargandoUbicacion(true);
-
-    const permiso =
-      await Location.requestForegroundPermissionsAsync();
-
-    if (!permiso.granted) {
-      Alert.alert(
-        'Permiso de ubicación',
-        'No se autorizó el acceso a la ubicación. Podés volver a intentarlo.'
-      );
-      return;
-    }
-
-    const serviciosActivos = await Location.hasServicesEnabledAsync();
-
-    if (!serviciosActivos) {
-      Alert.alert(
-        'GPS desactivado',
-        'Activá la ubicación del dispositivo e intentá nuevamente.'
-      );
-      return;
-    }
-
-    const ubicacion = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
-
-    const latitud = ubicacion.coords.latitude;
-    const longitud = ubicacion.coords.longitude;
-
-    setCoordenadas({
-      latitude: latitud,
-      longitude: longitud,
-    });
-
-    // Intentar obtener una dirección a partir de las coordenadas.
+  const obtenerUbicacion = async () => {
     try {
-      const direcciones = await Location.reverseGeocodeAsync({
+      setCargandoUbicacion(true);
+
+      const permiso =
+        await Location.requestForegroundPermissionsAsync();
+
+      if (!permiso.granted) {
+        Alert.alert(
+          'Permiso de ubicación',
+          'No se autorizó el acceso a la ubicación. Podés volver a intentarlo.'
+        );
+        return;
+      }
+
+      const serviciosActivos = await Location.hasServicesEnabledAsync();
+
+      if (!serviciosActivos) {
+        Alert.alert(
+          'GPS desactivado',
+          'Activá la ubicación del dispositivo e intentá nuevamente.'
+        );
+        return;
+      }
+
+      const ubicacion = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const latitud = ubicacion.coords.latitude;
+      const longitud = ubicacion.coords.longitude;
+
+      setCoordenadas({
         latitude: latitud,
         longitude: longitud,
       });
 
-      if (direcciones.length > 0) {
-        const resultado = direcciones[0];
+      // Intentar obtener una dirección a partir de las coordenadas.
+      try {
+        const direcciones = await Location.reverseGeocodeAsync({
+          latitude: latitud,
+          longitude: longitud,
+        });
 
-        const partes = [
-          resultado.street,
-          resultado.streetNumber,
-          resultado.district,
-          resultado.city,
-          resultado.region,
-        ].filter(Boolean);
+        if (direcciones.length > 0) {
+          const resultado = direcciones[0];
 
-        setDireccion(
-          partes.length > 0
-            ? partes.join(', ')
-            : 'Dirección no disponible; se guardarán las coordenadas GPS.'
-        );
-      } else {
+          const partes = [
+            resultado.street,
+            resultado.streetNumber,
+            resultado.district,
+            resultado.city,
+            resultado.region,
+          ].filter(Boolean);
+
+          setDireccion(
+            partes.length > 0
+              ? partes.join(', ')
+              : 'Dirección no disponible; se guardarán las coordenadas GPS.'
+          );
+        } else {
+          setDireccion(
+            'Dirección no disponible; se guardarán las coordenadas GPS.'
+          );
+        }
+      } catch (error) {
+        console.warn('No se pudo identificar la dirección:', error);
         setDireccion(
           'Dirección no disponible; se guardarán las coordenadas GPS.'
         );
       }
-    } catch (error) {
-      console.warn('No se pudo identificar la dirección:', error);
-      setDireccion(
-        'Dirección no disponible; se guardarán las coordenadas GPS.'
+
+      await Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
       );
+    } catch (error) {
+      console.error('Error al obtener la ubicación:', error);
+      Alert.alert(
+        'Error',
+        'No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.'
+      );
+    } finally {
+      setCargandoUbicacion(false);
     }
-
-    await Haptics.notificationAsync(
-      Haptics.NotificationFeedbackType.Success
-    );
-  } catch (error) {
-    console.error('Error al obtener la ubicación:', error);
-    Alert.alert(
-      'Error',
-      'No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.'
-    );
-  } finally {
-    setCargandoUbicacion(false);
-  }
-};
-
+  };
 
   const guardarNuevoReporte = async () => {
     if (guardandoReporte) {
@@ -356,19 +388,38 @@ const obtenerUbicacion = async () => {
       const ahora = new Date().toISOString();
       const identificador = `reporte-${Date.now()}`;
 
+      // Copiar los archivos al almacenamiento permanente.
+      const fotoPrincipalLocal = await guardarArchivoLocal(
+        foto,
+        `${identificador}-principal`,
+        'jpg'
+      );
+
+      const fotoSecundariaLocal = await guardarArchivoLocal(
+        fotoSecundaria,
+        `${identificador}-secundaria`,
+        'jpg'
+      );
+
+      const audioLocal = await guardarArchivoLocal(
+        audioUri,
+        `${identificador}-audio`,
+        'm4a'
+      );
+
       const nuevoReporte: Reporte = {
         id: identificador,
         codigoSeguimiento: `RC-${Date.now().toString().slice(-8)}`,
         tipo: tipoProblema,
         descripcionTexto: descripcion.trim(),
-        descripcionAudioUrlLocal: audioUri,
+        descripcionAudioUrlLocal: audioLocal,
         descripcionAudioUrlRemota: null,
         latitud: coordenadas.latitude,
         longitud: coordenadas.longitude,
         direccionDescripcion: direccion,
-        fotoPrincipalUrlLocal: foto,
+        fotoPrincipalUrlLocal: fotoPrincipalLocal,
         fotoPrincipalUrlRemota: null,
-        fotoSecundariaUrlLocal: fotoSecundaria,
+        fotoSecundariaUrlLocal: fotoSecundariaLocal,
         fotoSecundariaUrlRemota: null,
         estadoActual: 'RECIBIDO',
         cambios: [
@@ -379,7 +430,7 @@ const obtenerUbicacion = async () => {
             comentario: 'Reporte creado por el vecino.',
           },
         ],
-        esPublico: false,
+        esPublico: true,
         creadorId: 'vecino-local',
         zonaId: 'zona-pendiente',
         vecinosSumados: 0,
@@ -411,7 +462,6 @@ const obtenerUbicacion = async () => {
               setDireccion('');
               setMostrarUbicacion(false);
               setMostrarFormulario(false);
-              
             },
           },
         ]
@@ -509,7 +559,9 @@ const obtenerUbicacion = async () => {
                   Longitud: {coordenadas.longitude.toFixed(6)}
                 </ThemedText>
 
-                <ThemedText type="subtitle">Dirección del problema</ThemedText>
+                <ThemedText type="subtitle">
+                  Dirección del problema
+                </ThemedText>
 
                 <TextInput
                   style={styles.descriptionInput}
