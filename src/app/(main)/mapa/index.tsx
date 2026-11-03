@@ -1,4 +1,3 @@
-
 import * as Location from 'expo-location';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -117,23 +116,28 @@ export default function MapaReportesScreen() {
       : reportesPublicos.filter((reporte) => reporte.tipo === tipoFiltro);
 
   async function centrarEnMiUbicacion() {
-    setMensaje('');
+    setMensaje('Solicitando permiso de ubicación...');
 
     try {
       const permiso =
         await Location.requestForegroundPermissionsAsync();
 
+      setMensaje(`Resultado del permiso: ${permiso.status}`);
+
       if (permiso.status !== 'granted') {
         setMostrarUbicacion(false);
-        setMensaje(
-          'Necesitás permitir el acceso a la ubicación para mostrar dónde estás.'
-        );
         return;
       }
+
+      setMensaje('Permiso concedido. Obteniendo coordenadas...');
 
       const ubicacion = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+
+      setMensaje(
+        `Ubicación obtenida: ${ubicacion.coords.latitude}, ${ubicacion.coords.longitude}`
+      );
 
       const region = {
         latitude: ubicacion.coords.latitude,
@@ -146,7 +150,7 @@ export default function MapaReportesScreen() {
       mapaRef.current?.animateToRegion(region, 700);
     } catch (error) {
       console.error('Error al obtener la ubicación:', error);
-      setMensaje('No se pudo obtener tu ubicación. Intentá nuevamente.');
+      setMensaje(`Error de ubicación: ${String(error)}`);
     }
   }
 

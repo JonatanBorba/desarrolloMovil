@@ -1,7 +1,13 @@
 
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -56,7 +62,7 @@ export default function BandejaOperadorScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      cargarReportes();
+      void cargarReportes();
     }, [cargarReportes])
   );
 
@@ -77,11 +83,23 @@ export default function BandejaOperadorScreen() {
   return (
     <ThemedView style={styles.contenedor}>
       <ThemedText type="title">Bandeja de reportes</ThemedText>
+
       <ThemedText>
         Reportes guardados en este dispositivo: {reportes.length}
       </ThemedText>
 
+      <Pressable
+        accessibilityRole="button"
+        style={styles.botonEscanear}
+        onPress={() => router.push('/(operador)/escanear')}
+      >
+        <ThemedText style={styles.textoBotonEscanear}>
+          ▦ Escanear QR
+        </ThemedText>
+      </Pressable>
+
       <ThemedText type="subtitle">Filtrar por estado</ThemedText>
+
       <View style={styles.filtros}>
         {ESTADOS.map((estado) => (
           <Pressable
@@ -98,6 +116,7 @@ export default function BandejaOperadorScreen() {
       </View>
 
       <ThemedText type="subtitle">Filtrar por tipo</ThemedText>
+
       <View style={styles.filtros}>
         {tipos.map((tipo) => (
           <Pressable
@@ -123,6 +142,7 @@ export default function BandejaOperadorScreen() {
           <ThemedText>
             No se pudieron cargar los reportes guardados.
           </ThemedText>
+
           <Pressable onPress={cargarReportes} style={styles.boton}>
             <ThemedText style={styles.textoBoton}>Reintentar</ThemedText>
           </Pressable>
@@ -151,12 +171,16 @@ export default function BandejaOperadorScreen() {
             >
               <ThemedText type="subtitle">{item.tipo}</ThemedText>
               <ThemedText>Código: {item.codigoSeguimiento}</ThemedText>
-              <ThemedText>Estado: {nombreEstado(item.estadoActual)}</ThemedText>
+              <ThemedText>
+                Estado: {nombreEstado(item.estadoActual)}
+              </ThemedText>
               <ThemedText>
                 {item.descripcionTexto || 'Sin descripción escrita'}
               </ThemedText>
               <ThemedText>Zona: {item.zonaId}</ThemedText>
-              <ThemedText style={styles.enlace}>Abrir gestión del reporte →</ThemedText>
+              <ThemedText style={styles.enlace}>
+                Abrir gestión del reporte →
+              </ThemedText>
             </Pressable>
           )}
         />
@@ -169,6 +193,19 @@ const styles = StyleSheet.create({
   contenedor: {
     flex: 1,
     padding: 16,
+  },
+  botonEscanear: {
+    backgroundColor: '#246B45',
+    paddingVertical: 15,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  textoBotonEscanear: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   filtros: {
     flexDirection: 'row',
