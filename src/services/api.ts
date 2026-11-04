@@ -2,20 +2,12 @@ import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-/**
- * Capa HTTP de la app contra la API de la cátedra.
- *
- * URL base: en Expo Go, `hostUri` trae la IP de la PC que sirve el bundle
- * (la misma donde corre `pnpm dev`), así no hay que hardcodear la IP.
- * Sobreescribible con EXPO_PUBLIC_API_URL si hiciera falta.
- */
 const hostDesdeExpo = Constants.expoConfig?.hostUri?.split(":")[0];
 
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   `http://${hostDesdeExpo ?? "localhost"}:3000`;
 
-// Mismas claves que usa services/auth.ts para persistir la sesión.
 export const TOKEN_KEY = "sessionToken";
 export const ROLE_KEY = "sessionRole";
 export const USER_KEY = "sessionUser";
@@ -27,10 +19,7 @@ async function leerItemSeguro(clave: string): Promise<string | null> {
   return SecureStore.getItemAsync(clave);
 }
 
-async function escribirItemSeguro(
-  clave: string,
-  valor: string,
-): Promise<void> {
+async function escribirItemSeguro(clave: string, valor: string): Promise<void> {
   if (Platform.OS === "web") {
     return;
   }
@@ -43,10 +32,6 @@ export async function borrarItemSeguro(clave: string): Promise<void> {
   }
   await SecureStore.deleteItemAsync(clave);
 }
-
-// ---------------------------------------------------------------------------
-// Sobre de respuesta de la API: { datos, meta } | { error: { codigo, mensaje } }
-// ---------------------------------------------------------------------------
 
 interface SobreLista<T> {
   datos: T[];
@@ -84,9 +69,9 @@ export class ErrorDeRed extends Error {
 export interface OpcionesPeticion {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
-  /** true si el endpoint necesita el token (🔒). Default: true. */
+
   conSesion?: boolean;
-  /** Parámetros de query (?tipoId=...&estado=...). Se omiten los undefined. */
+
   params?: Record<string, string | number | undefined>;
 }
 
@@ -140,7 +125,6 @@ async function pedir<T>(
   return json as T;
 }
 
-/** GET/POST/… que devuelve un recurso único ({ datos, meta: null }). */
 export async function apiUno<T>(
   ruta: string,
   opciones?: OpcionesPeticion,
@@ -149,7 +133,6 @@ export async function apiUno<T>(
   return sobre.datos;
 }
 
-/** GET que devuelve una lista paginada ({ datos: [...], meta }). */
 export async function apiLista<T>(
   ruta: string,
   opciones?: OpcionesPeticion,
@@ -157,10 +140,6 @@ export async function apiLista<T>(
   const sobre = await pedir<SobreLista<T>>(ruta, opciones);
   return sobre.datos;
 }
-
-// ---------------------------------------------------------------------------
-// Archivos (fotos y audios)
-// ---------------------------------------------------------------------------
 
 interface ArchivoSubido {
   url: string;
@@ -192,16 +171,12 @@ function mimeDe(uri: string): string {
   }
 }
 
-/**
- * Sube un archivo local (file://) a POST /archivos y devuelve la URL
- * que hay que mandar en el recurso (fotos, audioUrl).
- */
 export async function subirArchivo(uriLocal: string): Promise<string> {
   const token = await leerItemSeguro(TOKEN_KEY);
   const mime = mimeDe(uriLocal);
 
   const datos = new FormData();
-  // React Native: el "archivo" viaja como objeto { uri, name, type }.
+
   datos.append("archivo", {
     uri: uriLocal,
     name: `subida.${extensionDe(uriLocal)}`,
@@ -230,10 +205,10 @@ export async function subirArchivo(uriLocal: string): Promise<string> {
   }
 
   const sobre = json as SobreUno<ArchivoSubido>;
-  // La API devuelve una URL relativa o absoluta; la normalizamos a absoluta.
+
   return sobre.datos.url.startsWith("http")
     ? sobre.datos.url
     : `${API_URL}${sobre.datos.url}`;
 }
 
-export { leerItemSeguro, escribirItemSeguro };
+export { escribirItemSeguro, leerItemSeguro };

@@ -29,7 +29,7 @@ async function guardarSesion(sesion: SesionApi): Promise<Sesion> {
   };
 }
 
-/** Ingresa con email y contraseña contra POST /auth/ingreso. */
+/** Ingresa con email y contraseña */
 export async function iniciarSesion(
   email: string,
   contrasena: string,
@@ -43,7 +43,7 @@ export async function iniciarSesion(
   return guardarSesion(sesion);
 }
 
-/** Crea una cuenta de vecino contra POST /auth/registro. */
+/** Crea una cuenta de vecino */
 export async function registrarse(
   nombre: string,
   email: string,

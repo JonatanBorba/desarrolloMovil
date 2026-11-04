@@ -7,7 +7,7 @@ export type EstadoReporte =
 
 export interface CambioEstadoReporte {
   id: string;
-  fecha: string; // ISO 8601 con zona
+  fecha: string;
   estado: EstadoReporte;
   comentario: string | null;
 }

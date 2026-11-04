@@ -1,11 +1,19 @@
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import { router } from "expo-router";
+import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Button,
   Image,
@@ -20,15 +28,16 @@ import {
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import {
+  guardarReporte,
+  obtenerReportePorId,
+} from "@/services/almacenamientoReportes";
+import {
   enviarReporte,
   obtenerReportesCercanos,
   obtenerTiposDeReporte,
 } from "@/services/reportes";
 import type { Reporte } from "@/tipos/reporte";
 
-// La cámara y la galería devuelven archivos en la caché, que el sistema puede
-// borrar. Para que la foto sobreviva hay que copiarla a documentDirectory
-// (API nueva de expo-file-system, SDK 54+).
 async function copiarFotoADocumentos(
   uri: string,
   nombre: string,
@@ -44,8 +53,106 @@ async function copiarFotoADocumentos(
   return definitiva.uri;
 }
 
+function obtenerDirectorioTemporal() {
+  return new Directory(Paths.cache, "reportes-temporales");
+}
+
+async function guardarArchivoTemporal(
+  uri: string,
+  nombreBase: string,
+  extensionPredeterminada: string,
+): Promise<string> {
+  const directorio = obtenerDirectorioTemporal();
+
+  if (!directorio.exists) {
+    directorio.create({
+      intermediates: true,
+      idempotent: true,
+    });
+  }
+
+  const uriSinParametros = uri.split("?")[0].split("#")[0];
+  const extension =
+    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ?? extensionPredeterminada;
+
+  const archivoOriginal = new File(uri);
+  const archivoTemporal = new File(
+    directorio,
+    `${nombreBase}-${Date.now()}.${extension}`,
+  );
+
+  archivoOriginal.copy(archivoTemporal);
+
+  return archivoTemporal.uri;
+}
+
+function eliminarArchivoTemporal(uri: string | null) {
+  if (!uri) return;
+
+  try {
+    const directorio = obtenerDirectorioTemporal();
+    const prefijo = directorio.uri.endsWith("/")
+      ? directorio.uri
+      : `${directorio.uri}/`;
+
+    if (!uri.startsWith(prefijo)) return;
+
+    const archivo = new File(uri);
+
+    if (archivo.exists) {
+      archivo.delete();
+    }
+  } catch (error) {
+    console.warn("No se pudo eliminar el archivo temporal:", error);
+  }
+}
+
+async function guardarArchivoLocal(
+  uri: string | null,
+  nombreBase: string,
+  extensionPredeterminada: string,
+): Promise<string | null> {
+  if (!uri) return null;
+
+  const directorio = new Directory(Paths.document, "reportes");
+
+  if (!directorio.exists) {
+    directorio.create({
+      intermediates: true,
+      idempotent: true,
+    });
+  }
+
+  const uriSinParametros = uri.split("?")[0].split("#")[0];
+  const extension =
+    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ?? extensionPredeterminada;
+
+  const archivoOriginal = new File(uri);
+  const archivoDestino = new File(
+    directorio,
+    `${nombreBase}-${Date.now()}.${extension}`,
+  );
+
+  archivoOriginal.copy(archivoDestino);
+
+  return archivoDestino.uri;
+}
+
 export default function NuevoReporteScreen() {
+  const parametros = useLocalSearchParams<{ id?: string | string[] }>();
+  const idParametro = Array.isArray(parametros.id)
+    ? parametros.id[0]
+    : parametros.id;
+
+  const esEdicion = Boolean(idParametro);
+
   const [permission, requestPermission] = useCameraPermissions();
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
+
+  const [reporteOriginal, setReporteOriginal] = useState<Reporte | null>(null);
+  const [cargandoReporte, setCargandoReporte] = useState(esEdicion);
+  const [edicionPermitida, setEdicionPermitida] = useState(false);
 
   const [mostrarCamara, setMostrarCamara] = useState(false);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
@@ -57,9 +164,10 @@ export default function NuevoReporteScreen() {
 
   const [tipoProblema, setTipoProblema] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [procesandoAudio, setProcesandoAudio] = useState(false);
   const [tiposProblema, setTiposProblema] = useState<string[]>([]);
 
-  // Los tipos vienen del catálogo de la API (los mismos del filtro del mapa).
   useEffect(() => {
     let cancelado = false;
     obtenerTiposDeReporte()
@@ -78,9 +186,154 @@ export default function NuevoReporteScreen() {
   } | null>(null);
 
   const [cargandoUbicacion, setCargandoUbicacion] = useState(false);
+  const [direccion, setDireccion] = useState("");
   const [guardandoReporte, setGuardandoReporte] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
+
+  useEffect(() => {
+    if (!idParametro) {
+      setCargandoReporte(false);
+      return;
+    }
+
+    let activo = true;
+
+    const cargarReporteParaEditar = async () => {
+      try {
+        const guardado = await obtenerReportePorId(idParametro);
+
+        if (!activo) return;
+
+        if (!guardado) {
+          Alert.alert(
+            "Reporte no encontrado",
+            "No se encontró el reporte que intentás editar.",
+            [{ text: "Aceptar", onPress: () => router.back() }],
+          );
+          return;
+        }
+
+        setReporteOriginal(guardado);
+
+        if (guardado.estadoActual !== "RECIBIDO") {
+          setEdicionPermitida(false);
+          return;
+        }
+
+        setEdicionPermitida(true);
+        setFoto(
+          guardado.fotoPrincipalUrlLocal ?? guardado.fotoPrincipalUrlRemota,
+        );
+        setFotoSecundaria(
+          guardado.fotoSecundariaUrlLocal ?? guardado.fotoSecundariaUrlRemota,
+        );
+        setAudioUri(
+          guardado.descripcionAudioUrlLocal ??
+            guardado.descripcionAudioUrlRemota,
+        );
+        setDescripcion(guardado.descripcionTexto ?? "");
+        setTipoProblema(guardado.tipo);
+      } catch (error) {
+        console.error("Error al cargar el reporte para editar:", error);
+
+        if (activo) {
+          Alert.alert("Error", "No se pudo cargar el reporte para editar.", [
+            { text: "Aceptar", onPress: () => router.back() },
+          ]);
+        }
+      } finally {
+        if (activo) {
+          setCargandoReporte(false);
+        }
+      }
+    };
+
+    void cargarReporteParaEditar();
+
+    return () => {
+      activo = false;
+    };
+  }, [idParametro]);
+
+  const iniciarGrabacion = async () => {
+    if (procesandoAudio || recorderState.isRecording) return;
+
+    try {
+      setProcesandoAudio(true);
+
+      const permiso = await AudioModule.requestRecordingPermissionsAsync();
+
+      if (!permiso.granted) {
+        Alert.alert(
+          "Permiso necesario",
+          "Necesitás permitir el acceso al micrófono para grabar la descripción.",
+        );
+        return;
+      }
+
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+      });
+
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+    } catch (error) {
+      console.error("Error al iniciar la grabación:", error);
+
+      Alert.alert("Error", "No se pudo iniciar la grabación de audio.");
+    } finally {
+      setProcesandoAudio(false);
+    }
+  };
+
+  const detenerGrabacion = async () => {
+    if (procesandoAudio || !recorderState.isRecording) return;
+
+    try {
+      setProcesandoAudio(true);
+
+      await audioRecorder.stop();
+
+      const uriGrabacion = audioRecorder.uri;
+
+      if (uriGrabacion) {
+        const nuevoAudioTemporal = await guardarArchivoTemporal(
+          uriGrabacion,
+          "descripcion-audio",
+          "m4a",
+        );
+
+        eliminarArchivoTemporal(audioUri);
+        setAudioUri(nuevoAudioTemporal);
+
+        await Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Success,
+        );
+      } else {
+        Alert.alert(
+          "Error",
+          "La grabación terminó, pero no se encontró el archivo de audio.",
+        );
+      }
+
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+      });
+    } catch (error) {
+      console.error("Error al detener la grabación:", error);
+      Alert.alert("Error", "No se pudo finalizar la grabación.");
+    } finally {
+      setProcesandoAudio(false);
+    }
+  };
+
+  const eliminarGrabacion = () => {
+    eliminarArchivoTemporal(audioUri);
+    setAudioUri(null);
+  };
 
   const abrirCamara = async (esSegundaFoto = false) => {
     if (!permission?.granted) {
@@ -100,20 +353,26 @@ export default function NuevoReporteScreen() {
   };
 
   const tomarFoto = async () => {
-    if (!cameraRef.current) {
-      return;
-    }
+    if (!cameraRef.current) return;
 
     try {
       const resultado = await cameraRef.current.takePictureAsync();
 
       if (resultado?.uri) {
+        const nuevaFotoTemporal = await guardarArchivoTemporal(
+          resultado.uri,
+          tomandoFotoSecundaria ? "segunda-foto" : "foto-principal",
+          "jpg",
+        );
+
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         if (tomandoFotoSecundaria) {
-          setFotoSecundaria(resultado.uri);
+          eliminarArchivoTemporal(fotoSecundaria);
+          setFotoSecundaria(nuevaFotoTemporal);
         } else {
-          setFoto(resultado.uri);
+          eliminarArchivoTemporal(foto);
+          setFoto(nuevaFotoTemporal);
         }
 
         setMostrarCamara(false);
@@ -150,10 +409,18 @@ export default function NuevoReporteScreen() {
       if (!resultado.canceled && resultado.assets.length > 0) {
         const uriImagen = resultado.assets[0].uri;
 
+        const nuevaFotoTemporal = await guardarArchivoTemporal(
+          uriImagen,
+          esSegundaFoto ? "segunda-foto" : "foto-principal",
+          "jpg",
+        );
+
         if (esSegundaFoto) {
-          setFotoSecundaria(uriImagen);
+          eliminarArchivoTemporal(fotoSecundaria);
+          setFotoSecundaria(nuevaFotoTemporal);
         } else {
-          setFoto(uriImagen);
+          eliminarArchivoTemporal(foto);
+          setFoto(nuevaFotoTemporal);
         }
       }
     } catch (error) {
@@ -186,8 +453,6 @@ export default function NuevoReporteScreen() {
         return;
       }
 
-      // Doble lectura: la última posición conocida llega rápido (puede ser
-      // vieja) y la lectura precisa la corrige cuando llega.
       const ultima = await Location.getLastKnownPositionAsync();
       if (ultima) {
         setCoordenadas({
@@ -200,15 +465,50 @@ export default function NuevoReporteScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
 
+      const latitud = ubicacion.coords.latitude;
+      const longitud = ubicacion.coords.longitude;
+
       setCoordenadas({
-        latitude: ubicacion.coords.latitude,
-        longitude: ubicacion.coords.longitude,
+        latitude: latitud,
+        longitude: longitud,
       });
+
+      try {
+        const direcciones = await Location.reverseGeocodeAsync({
+          latitude: latitud,
+          longitude: longitud,
+        });
+
+        if (direcciones.length > 0) {
+          const resultado = direcciones[0];
+
+          const partes = [
+            resultado.street,
+            resultado.streetNumber,
+            resultado.district,
+            resultado.city,
+            resultado.region,
+          ].filter(Boolean);
+
+          setDireccion(
+            partes.length > 0
+              ? partes.join(", ")
+              : "Dirección no disponible; se guardarán las coordenadas GPS.",
+          );
+        } else {
+          setDireccion(
+            "Dirección no disponible; se guardarán las coordenadas GPS.",
+          );
+        }
+      } catch (error) {
+        console.warn("No se pudo identificar la dirección:", error);
+        setDireccion(
+          "Dirección no disponible; se guardarán las coordenadas GPS.",
+        );
+      }
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // PRD: antes de crear un reporte nuevo, mostrar los que ya existen
-      // a menos de 50 metros y preguntar si es el mismo problema.
       try {
         const cercanos = await obtenerReportesCercanos(
           ubicacion.coords.latitude,
@@ -244,6 +544,7 @@ export default function NuevoReporteScreen() {
       }
     } catch (error) {
       console.error("Error al obtener la ubicación:", error);
+
       Alert.alert(
         "Error",
         "No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.",
@@ -254,7 +555,13 @@ export default function NuevoReporteScreen() {
   };
 
   const guardarNuevoReporte = async () => {
-    if (guardandoReporte) {
+    if (guardandoReporte) return;
+
+    if (recorderState.isRecording) {
+      Alert.alert(
+        "Grabación en curso",
+        "Detené la grabación antes de guardar el reporte.",
+      );
       return;
     }
 
@@ -288,8 +595,6 @@ export default function NuevoReporteScreen() {
       const ahora = new Date().toISOString();
       const identificador = `rep-${Date.now()}`;
 
-      // Las URIs de cámara/galería viven en la caché: se copian a documentos
-      // antes de guardar el reporte para que las fotos no desaparezcan.
       const fotoPrincipal = await copiarFotoADocumentos(
         foto,
         `${identificador}-principal.jpg`,
@@ -301,19 +606,37 @@ export default function NuevoReporteScreen() {
           )
         : null;
 
+      const fotoPrincipalLocal = await guardarArchivoLocal(
+        foto,
+        `${identificador}-principal`,
+        "jpg",
+      );
+
+      const fotoSecundariaLocal = await guardarArchivoLocal(
+        fotoSecundaria,
+        `${identificador}-secundaria`,
+        "jpg",
+      );
+
+      const audioLocal = await guardarArchivoLocal(
+        audioUri,
+        `${identificador}-audio`,
+        "m4a",
+      );
+
       const nuevoReporte: Reporte = {
         id: identificador,
         codigoSeguimiento: `RC-${Date.now().toString().slice(-8)}`,
         tipo: tipoProblema,
         descripcionTexto: descripcion.trim(),
-        descripcionAudioUrlLocal: null,
+        descripcionAudioUrlLocal: audioLocal,
         descripcionAudioUrlRemota: null,
         latitud: coordenadas.latitude,
         longitud: coordenadas.longitude,
-        direccionDescripcion: "Dirección pendiente de identificar",
-        fotoPrincipalUrlLocal: fotoPrincipal,
+        direccionDescripcion: direccion || "Dirección pendiente de identificar",
+        fotoPrincipalUrlLocal: fotoPrincipalLocal,
         fotoPrincipalUrlRemota: null,
-        fotoSecundariaUrlLocal: fotoOpcional,
+        fotoSecundariaUrlLocal: fotoSecundariaLocal,
         fotoSecundariaUrlRemota: null,
         estadoActual: "RECIBIDO",
         cambios: [
@@ -324,7 +647,7 @@ export default function NuevoReporteScreen() {
             comentario: "Reporte creado por el vecino.",
           },
         ],
-        esPublico: false,
+        esPublico: true,
         creadorId: "vecino-local",
         zonaId: "zona-pendiente",
         vecinosSumados: 0,
@@ -335,9 +658,11 @@ export default function NuevoReporteScreen() {
         duplicadoDe: null,
       };
 
-      // Intenta subirlo a la API (sube las fotos antes); si no hay
-      // conexión queda en la cola local marcado como sin sincronizar.
       const resultado = await enviarReporte(nuevoReporte);
+
+      eliminarArchivoTemporal(foto);
+      eliminarArchivoTemporal(fotoSecundaria);
+      eliminarArchivoTemporal(audioUri);
 
       try {
         await Haptics.notificationAsync(
@@ -360,7 +685,9 @@ export default function NuevoReporteScreen() {
               setFotoSecundaria(null);
               setTipoProblema("");
               setDescripcion("");
+              setAudioUri(null);
               setCoordenadas(null);
+              setDireccion("");
               setMostrarUbicacion(false);
               setMostrarFormulario(false);
             },
@@ -379,7 +706,178 @@ export default function NuevoReporteScreen() {
     }
   };
 
-  // Pantalla de cámara
+  const guardarEdicion = async () => {
+    if (guardandoReporte || !reporteOriginal || !idParametro) return;
+
+    if (recorderState.isRecording) {
+      Alert.alert(
+        "Grabación en curso",
+        "Detené la grabación antes de guardar los cambios.",
+      );
+      return;
+    }
+
+    if (!foto) {
+      Alert.alert(
+        "Foto obligatoria",
+        "El reporte debe conservar una foto principal.",
+      );
+      return;
+    }
+
+    if (descripcion.trim().length < 10) {
+      Alert.alert(
+        "Descripción incompleta",
+        "Escribí una descripción de al menos 10 caracteres.",
+      );
+      return;
+    }
+
+    try {
+      setGuardandoReporte(true);
+
+      // Se vuelve a consultar el estado para evitar editar un reporte
+      // que haya sido tomado por un operador mientras esta pantalla estaba abierta.
+      const reporteActual = await obtenerReportePorId(idParametro);
+
+      if (!reporteActual || reporteActual.estadoActual !== "RECIBIDO") {
+        setEdicionPermitida(false);
+
+        Alert.alert(
+          "Edición no disponible",
+          "El reporte ya no está en estado Recibido y no puede modificarse.",
+        );
+        return;
+      }
+
+      const fotoPrincipalSinCambios =
+        foto === reporteOriginal.fotoPrincipalUrlLocal ||
+        foto === reporteOriginal.fotoPrincipalUrlRemota;
+
+      const fotoSecundariaSinCambios =
+        fotoSecundaria === reporteOriginal.fotoSecundariaUrlLocal ||
+        fotoSecundaria === reporteOriginal.fotoSecundariaUrlRemota;
+
+      const audioSinCambios =
+        audioUri === reporteOriginal.descripcionAudioUrlLocal ||
+        audioUri === reporteOriginal.descripcionAudioUrlRemota;
+
+      const fotoPrincipalLocal = fotoPrincipalSinCambios
+        ? reporteOriginal.fotoPrincipalUrlLocal
+        : await guardarArchivoLocal(
+            foto,
+            `${reporteOriginal.id}-principal`,
+            "jpg",
+          );
+
+      const fotoPrincipalRemota = fotoPrincipalSinCambios
+        ? reporteOriginal.fotoPrincipalUrlRemota
+        : null;
+
+      const fotoSecundariaLocal = fotoSecundariaSinCambios
+        ? reporteOriginal.fotoSecundariaUrlLocal
+        : await guardarArchivoLocal(
+            fotoSecundaria,
+            `${reporteOriginal.id}-secundaria`,
+            "jpg",
+          );
+
+      const fotoSecundariaRemota = fotoSecundariaSinCambios
+        ? reporteOriginal.fotoSecundariaUrlRemota
+        : null;
+
+      const audioLocal = audioSinCambios
+        ? reporteOriginal.descripcionAudioUrlLocal
+        : await guardarArchivoLocal(
+            audioUri,
+            `${reporteOriginal.id}-audio`,
+            "m4a",
+          );
+
+      const audioRemoto = audioSinCambios
+        ? reporteOriginal.descripcionAudioUrlRemota
+        : null;
+
+      const reporteActualizado: Reporte = {
+        ...reporteActual,
+        descripcionTexto: descripcion.trim(),
+        fotoPrincipalUrlLocal: fotoPrincipalLocal,
+        fotoPrincipalUrlRemota: fotoPrincipalRemota,
+        fotoSecundariaUrlLocal: fotoSecundariaLocal,
+        fotoSecundariaUrlRemota: fotoSecundariaRemota,
+        descripcionAudioUrlLocal: audioLocal,
+        descripcionAudioUrlRemota: audioRemoto,
+      };
+
+      await guardarReporte(reporteActualizado);
+
+      eliminarArchivoTemporal(foto);
+      eliminarArchivoTemporal(fotoSecundaria);
+      eliminarArchivoTemporal(audioUri);
+
+      try {
+        await Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Success,
+        );
+      } catch (error) {
+        console.warn("No se pudo ejecutar la vibración:", error);
+      }
+
+      Alert.alert(
+        "Cambios guardados",
+        "El reporte se actualizó correctamente.",
+        [
+          {
+            text: "Aceptar",
+            onPress: () => {
+              router.replace({
+                pathname: "/(main)/reportes/[id]",
+                params: { id: reporteOriginal.id },
+              });
+            },
+          },
+        ],
+      );
+    } catch (error) {
+      console.error("Error al actualizar el reporte:", error);
+
+      Alert.alert(
+        "Error al guardar",
+        "No se pudieron guardar los cambios. Los datos originales del reporte se conservaron.",
+      );
+    } finally {
+      setGuardandoReporte(false);
+    }
+  };
+
+  if (cargandoReporte) {
+    return (
+      <ThemedView style={styles.container}>
+        <Stack.Screen options={{ title: "Editar reporte" }} />
+        <ActivityIndicator size="large" />
+        <ThemedText>Cargando reporte...</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (esEdicion && (!reporteOriginal || !edicionPermitida)) {
+    return (
+      <ThemedView style={styles.container}>
+        <Stack.Screen options={{ title: "Editar reporte" }} />
+
+        <ThemedText type="title">Edición no disponible</ThemedText>
+
+        <ThemedText>
+          {reporteOriginal
+            ? "Este reporte ya no está en estado Recibido. Podés consultar sus datos, pero no modificarlos."
+            : "No se encontró el reporte solicitado."}
+        </ThemedText>
+
+        <Button title="Volver" onPress={() => router.back()} />
+      </ThemedView>
+    );
+  }
+
   if (mostrarCamara) {
     return (
       <View style={styles.cameraContainer}>
@@ -401,8 +899,7 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla de ubicación GPS
-  if (mostrarUbicacion) {
+  if (mostrarUbicacion && !esEdicion) {
     return (
       <ThemedView style={styles.container}>
         <ScrollView
@@ -448,6 +945,21 @@ export default function NuevoReporteScreen() {
                 <ThemedText>
                   Longitud: {coordenadas.longitude.toFixed(6)}
                 </ThemedText>
+
+                <ThemedText type="subtitle">Dirección del problema</ThemedText>
+
+                <TextInput
+                  style={styles.descriptionInput}
+                  placeholder="Ej.: calle Urquiza 450, Gualeguaychú"
+                  placeholderTextColor="#777777"
+                  value={direccion}
+                  onChangeText={setDireccion}
+                  maxLength={200}
+                />
+
+                <ThemedText style={styles.helpText}>
+                  Podés corregir la dirección. Las coordenadas GPS se conservan.
+                </ThemedText>
               </View>
             )}
           </View>
@@ -470,45 +982,55 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla de datos del reporte
   if (mostrarFormulario) {
     return (
       <ThemedView style={styles.container}>
+        <Stack.Screen
+          options={{ title: esEdicion ? "Editar reporte" : "Nuevo reporte" }}
+        />
+
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <ThemedText type="title">Datos del reporte</ThemedText>
-
-          <ThemedText style={styles.description}>
-            Contanos qué problema encontraste para que el municipio pueda
-            identificarlo.
+          <ThemedText type="title">
+            {esEdicion ? "Editar descripción" : "Datos del reporte"}
           </ThemedText>
 
-          <ThemedText type="subtitle">Tipo de problema *</ThemedText>
+          <ThemedText style={styles.description}>
+            {esEdicion
+              ? "Podés corregir la descripción del problema."
+              : "Contanos qué problema encontraste para que el municipio pueda identificarlo."}
+          </ThemedText>
 
-          <View style={styles.tiposContainer}>
-            {tiposProblema.map((tipo) => (
-              <Pressable
-                key={tipo}
-                style={[
-                  styles.tipoButton,
-                  tipoProblema === tipo && styles.tipoButtonSelected,
-                ]}
-                onPress={() => setTipoProblema(tipo)}
-              >
-                <ThemedText
-                  style={[
-                    styles.tipoText,
-                    tipoProblema === tipo && styles.tipoTextSelected,
-                  ]}
-                >
-                  {tipo}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
+          {!esEdicion && (
+            <>
+              <ThemedText type="subtitle">Tipo de problema *</ThemedText>
+
+              <View style={styles.tiposContainer}>
+                {tiposProblema.map((tipo) => (
+                  <Pressable
+                    key={tipo}
+                    style={[
+                      styles.tipoButton,
+                      tipoProblema === tipo && styles.tipoButtonSelected,
+                    ]}
+                    onPress={() => setTipoProblema(tipo)}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.tipoText,
+                        tipoProblema === tipo && styles.tipoTextSelected,
+                      ]}
+                    >
+                      {tipo}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
 
           <ThemedText type="subtitle">Descripción *</ThemedText>
 
@@ -527,18 +1049,74 @@ export default function NuevoReporteScreen() {
             {descripcion.length}/1000 caracteres
           </ThemedText>
 
+          <View style={styles.audioContainer}>
+            <ThemedText type="subtitle">
+              Descripción por audio (opcional)
+            </ThemedText>
+
+            <ThemedText>
+              Podés grabar una explicación del problema usando el micrófono.
+            </ThemedText>
+
+            {audioUri && !recorderState.isRecording && (
+              <ThemedText style={styles.successText}>
+                ✓ Hay un audio adjunto
+              </ThemedText>
+            )}
+
+            {recorderState.isRecording ? (
+              <>
+                <ThemedText style={styles.recordingText}>
+                  ● Grabando audio...
+                </ThemedText>
+
+                <Button
+                  title="Detener grabación"
+                  disabled={procesandoAudio}
+                  onPress={detenerGrabacion}
+                />
+              </>
+            ) : (
+              <Button
+                title={audioUri ? "Grabar audio nuevamente" : "Grabar audio"}
+                disabled={procesandoAudio || guardandoReporte}
+                onPress={iniciarGrabacion}
+              />
+            )}
+
+            {audioUri && !recorderState.isRecording && (
+              <Button
+                title="Eliminar audio"
+                disabled={procesandoAudio || guardandoReporte}
+                onPress={eliminarGrabacion}
+              />
+            )}
+          </View>
+
           <ThemedText style={styles.helpText}>
-            Los campos marcados con * son obligatorios.
+            Los campos marcados con * son obligatorios. El audio es opcional.
           </ThemedText>
 
           <Button
-            title="Volver a las fotos"
+            title={esEdicion ? "Volver a las fotos" : "Volver a las fotos"}
             onPress={() => setMostrarFormulario(false)}
           />
 
           <Button
-            title="Continuar a la ubicación"
-            disabled={!tipoProblema || descripcion.trim().length < 10}
+            title={
+              esEdicion
+                ? guardandoReporte
+                  ? "Guardando cambios..."
+                  : "Guardar cambios"
+                : "Continuar a la ubicación"
+            }
+            disabled={
+              !esEdicion &&
+              (!tipoProblema ||
+                descripcion.trim().length < 10 ||
+                recorderState.isRecording ||
+                procesandoAudio)
+            }
             onPress={() => {
               if (descripcion.trim().length < 10) {
                 Alert.alert(
@@ -548,7 +1126,11 @@ export default function NuevoReporteScreen() {
                 return;
               }
 
-              setMostrarUbicacion(true);
+              if (esEdicion) {
+                void guardarEdicion();
+              } else {
+                setMostrarUbicacion(true);
+              }
             }}
           />
         </ScrollView>
@@ -556,17 +1138,24 @@ export default function NuevoReporteScreen() {
     );
   }
 
-  // Pantalla inicial: fotos del reporte
   return (
     <ThemedView style={styles.container}>
+      <Stack.Screen
+        options={{ title: esEdicion ? "Editar reporte" : "Nuevo reporte" }}
+      />
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <ThemedText type="title">Nuevo reporte</ThemedText>
+        <ThemedText type="title">
+          {esEdicion ? "Editar reporte" : "Nuevo reporte"}
+        </ThemedText>
 
         <ThemedText style={styles.description}>
-          Para crear un reporte necesitás adjuntar una foto del problema.
+          {esEdicion
+            ? "Podés reemplazar las fotos adjuntas. Los datos de ubicación y tipo de problema se mantienen."
+            : "Para crear un reporte necesitás adjuntar una foto del problema."}
         </ThemedText>
 
         <View style={styles.previewContainer}>
@@ -618,6 +1207,14 @@ export default function NuevoReporteScreen() {
                 <ThemedText style={styles.successText}>
                   ✓ Segunda foto agregada correctamente
                 </ThemedText>
+
+                <Button
+                  title="Eliminar segunda foto"
+                  onPress={() => {
+                    eliminarArchivoTemporal(fotoSecundaria);
+                    setFotoSecundaria(null);
+                  }}
+                />
               </>
             ) : (
               <ThemedText>
@@ -663,25 +1260,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
-
   scrollContent: {
     gap: 20,
     paddingBottom: 32,
   },
-
   description: {
     marginTop: 8,
   },
-
   cameraContainer: {
     flex: 1,
     backgroundColor: "#000000",
   },
-
   camera: {
     flex: 1,
   },
-
   cameraControls: {
     position: "absolute",
     bottom: 40,
@@ -690,46 +1282,50 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 16,
   },
-
   captureButton: {
     backgroundColor: "#003785",
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 30,
   },
-
   captureButtonText: {
     color: "#FFFFFF",
     fontWeight: "bold",
   },
-
   cancelButton: {
     backgroundColor: "#FFFFFF",
     paddingVertical: 12,
     paddingHorizontal: 28,
     borderRadius: 25,
   },
-
   cancelButtonText: {
     color: "#003785",
     fontWeight: "bold",
   },
-
   previewContainer: {
     marginTop: 8,
     gap: 12,
   },
-
   preview: {
     width: "100%",
     height: 250,
     borderRadius: 12,
   },
-
   successText: {
     fontWeight: "bold",
   },
-
+  recordingText: {
+    color: "#D32F2F",
+    fontWeight: "bold",
+  },
+  audioContainer: {
+    marginTop: 8,
+    gap: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#777777",
+    borderRadius: 10,
+  },
   coordinatesContainer: {
     marginTop: 8,
     gap: 8,
@@ -738,17 +1334,14 @@ const styles = StyleSheet.create({
     borderColor: "#777777",
     borderRadius: 10,
   },
-
   continueContainer: {
     marginTop: 8,
   },
-
   tiposContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
   },
-
   tipoButton: {
     borderWidth: 1,
     borderColor: "#777777",
@@ -756,21 +1349,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
-
   tipoButtonSelected: {
     backgroundColor: "#003785",
     borderColor: "#003785",
   },
-
   tipoText: {
     color: "#333333",
   },
-
   tipoTextSelected: {
     color: "#FFFFFF",
     fontWeight: "bold",
   },
-
   descriptionInput: {
     minHeight: 140,
     borderWidth: 1,
@@ -780,12 +1369,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#222222",
   },
-
   counterText: {
     fontSize: 12,
     textAlign: "right",
   },
-
   helpText: {
     fontSize: 13,
   },

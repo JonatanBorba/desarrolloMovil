@@ -1,12 +1,5 @@
 import type { Reporte, TipoDeReporte } from "@/tipos/reporte";
 
-/**
- * Datos inventados mientras la API de la cátedra no está disponible.
- * Ninguna pantalla importa este archivo directamente: todo pasa por
- * src/services/reportes.ts. Cuando llegue la API, se cambia el servicio
- * y estos datos se descartan.
- */
-
 export const tiposDeReporteMock: TipoDeReporte[] = [
   {
     id: "tip-bache",
@@ -68,7 +61,6 @@ export const tiposDeReporteMock: TipoDeReporte[] = [
 
 // Coordenadas de referencia: centro de Gualeguaychú, Entre Ríos.
 export const reportesPublicosMock: Reporte[] = [
-  // Caso "feo" del PRD: un reporte con cinco cambios de estado.
   {
     id: "rep-00412",
     codigoSeguimiento: "GCHU-2026-00412",
@@ -126,7 +118,7 @@ export const reportesPublicosMock: Reporte[] = [
     sincronizado: true,
     duplicadoDe: null,
   },
-  // Caso "feo" del PRD: un reporte rechazado con motivo largo.
+
   {
     id: "rep-00398",
     codigoSeguimiento: "GCHU-2026-00398",
@@ -173,7 +165,6 @@ export const reportesPublicosMock: Reporte[] = [
     sincronizado: true,
     duplicadoDe: null,
   },
-  // Caso "feo" del PRD: un reporte resuelto con foto del arreglo.
   {
     id: "rep-00355",
     codigoSeguimiento: "GCHU-2026-00355",

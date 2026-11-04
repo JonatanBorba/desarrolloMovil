@@ -17,7 +17,6 @@ export default function HomeScreen() {
   const esOscuro = useColorScheme() === "dark";
 
   useEffect(() => {
-    // Temporizador de 2000 ms (2 segundos)
     const timer = setTimeout(() => {
       setMostrarSplash(false);
     }, 2000);
@@ -25,7 +24,6 @@ export default function HomeScreen() {
     return () => clearTimeout(timer);
   }, []);
 
-  // 1. PANTALLA TEMPORAL (Splash pantalla completa)
   if (mostrarSplash) {
     return (
       <View style={styles.splashContainer}>
@@ -37,7 +35,6 @@ export default function HomeScreen() {
     );
   }
 
-  // 2. PANTALLA PRINCIPAL
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -90,17 +87,16 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Estilos de la Pantalla Splash a pantalla completa
   splashContainer: {
     flex: 1,
-    backgroundColor: "#0C5376", // Azul de fondo coincidente con la imagen
+    backgroundColor: "#0C5376",
     justifyContent: "center",
     alignItems: "center",
   },
   splashImagen: {
     width: "100%",
     height: "100%",
-    resizeMode: "cover", // Cubre toda la pantalla sin distorsionar
+    resizeMode: "cover",
   },
 
   // Estilos de la Pantalla Principal

@@ -21,23 +21,7 @@ import type {
   TipoDeReporte,
 } from "@/tipos/reporte";
 
-/**
- * Capa de servicios de reportes.
- *
- * Todas las funciones hablan con la API de la cátedra. Si la API no
- * responde (ErrorDeRed), se cae al respaldo local: la cola de reportes
- * propios sin subir y, para el mapa, los mocks públicos.
- *
- * La API habla con los tipos del contrato (estados en minúscula, fotos
- * como arreglo, etc.): acá se traducen al modelo interno de la app y
- * las pantallas no se tocan.
- */
-
 const CLAVE_ADHESIONES = "@reporte_ciudadano/adhesiones";
-
-// ---------------------------------------------------------------------------
-// Traducción API → modelo de la app
-// ---------------------------------------------------------------------------
 
 const ESTADO_DESDE_API: Record<EstadoReporteApi, EstadoReporte> = {
   recibido: "RECIBIDO",
@@ -60,7 +44,6 @@ function traducirCambio(cambio: CambioDeEstadoApi): CambioEstadoReporte {
   };
 }
 
-/** nombre (tipoId) por id, para mostrar "Bache" en vez de "tip-bache". */
 type CatalogoTipos = Map<string, string>;
 
 function traducirReporte(
@@ -100,10 +83,6 @@ function traducirReporte(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Catálogo de tipos (se cachea en memoria)
-// ---------------------------------------------------------------------------
-
 let catalogoTipos: CatalogoTipos | null = null;
 let tiposApiCache: TipoDeReporte[] | null = null;
 
@@ -139,7 +118,6 @@ async function cargarCatalogo(): Promise<CatalogoTipos> {
   return catalogoTipos ?? new Map();
 }
 
-/** tipoId a partir del nombre que usa el formulario ("Bache" → "tip-bache"). */
 export async function tipoIdDesdeNombre(
   nombre: string,
 ): Promise<string | null> {
@@ -147,14 +125,6 @@ export async function tipoIdDesdeNombre(
   return tipos.find((t) => t.nombre === nombre)?.id ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Reportes propios ("Mis reportes")
-// ---------------------------------------------------------------------------
-
-/**
- * Lista los reportes del vecino: los que están en la API más los que
- * quedaron en la cola local sin subir (sincronizado = false).
- */
 export async function obtenerMisReportes(): Promise<Reporte[]> {
   const locales = await obtenerReportes();
   const pendientes = locales.filter((r) => !r.sincronizado);
@@ -208,11 +178,6 @@ async function obtenerIdsAdheridos(): Promise<string[]> {
   }
 }
 
-/**
- * Devuelve todos los reportes visibles en el mapa público:
- * los del servidor (mock) más los propios ya sincronizados/públicos.
- * Nunca expone quién los hizo.
- */
 export async function obtenerReportesPublicos(): Promise<Reporte[]> {
   const [locales, adheridos] = await Promise.all([
     obtenerReportes(),
@@ -257,11 +222,6 @@ export async function obtenerReportesPublicos(): Promise<Reporte[]> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Detalle
-// ---------------------------------------------------------------------------
-
-/** Busca un reporte por id: primero la cola local, después la API. */
 export async function obtenerReportePorIdConPublicos(
   id: string,
 ): Promise<Reporte | null> {
@@ -290,18 +250,9 @@ export async function obtenerReportePorIdConPublicos(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sumarse a un reporte
-// ---------------------------------------------------------------------------
-
-/**
- * Registra que el vecino se suma a un reporte existente.
- * Devuelve el reporte actualizado o null si no existe.
- */
 export async function sumarseAReporte(id: string): Promise<Reporte | null> {
   const adheridos = await obtenerIdsAdheridos();
 
-  // Reporte propio todavía en la cola local (no existe en la API)
   const propio = await obtenerReportePorId(id);
   if (propio) {
     if (!propio.yaMeSumé) {
@@ -329,10 +280,6 @@ export async function sumarseAReporte(id: string): Promise<Reporte | null> {
   const catalogo = await cargarCatalogo();
   return traducirReporte(api, catalogo, [], true);
 }
-
-// ---------------------------------------------------------------------------
-// Crear y sincronizar
-// ---------------------------------------------------------------------------
 
 interface CuerpoCrearReporte {
   id?: string;
@@ -376,13 +323,6 @@ async function subirFotosPendientes(reporte: Reporte): Promise<{
   };
 }
 
-/**
- * Intenta subir un reporte del vecino a la API.
- *
- * Devuelve el reporte como quedó guardado localmente: sincronizado si
- * la API lo aceptó, o en la cola local (sincronizado = false) si no
- * había conexión. Los errores de validación de la API se propagan.
- */
 export async function enviarReporte(reporte: Reporte): Promise<Reporte> {
   const tipoId = await tipoIdDesdeNombre(reporte.tipo);
 
@@ -440,10 +380,6 @@ export async function enviarReporte(reporte: Reporte): Promise<Reporte> {
   }
 }
 
-/**
- * Reintenta subir todos los reportes que quedaron pendientes en la cola
- * local. Se llama al enfocar "Mis reportes".
- */
 export async function sincronizarPendientes(): Promise<void> {
   const locales = await obtenerReportes();
   const pendientes = locales.filter((r) => !r.sincronizado);
@@ -456,10 +392,6 @@ export async function sincronizarPendientes(): Promise<void> {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Distancia y reportes cercanos
-// ---------------------------------------------------------------------------
 
 /** Distancia en metros entre dos coordenadas (fórmula de Haversine). */
 export function distanciaEnMetros(

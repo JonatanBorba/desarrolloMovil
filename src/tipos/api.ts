@@ -1,8 +1,3 @@
-/**
- * Tipos tal como los devuelve la API de la cátedra (contract/types.ts).
- * No se modifican: el servicio los traduce al modelo interno de la app.
- */
-
 export type EstadoReporteApi =
   | "recibido"
   | "en_revision"
