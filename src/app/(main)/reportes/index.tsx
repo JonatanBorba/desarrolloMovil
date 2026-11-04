@@ -1,28 +1,23 @@
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  View,
+} from "react-native";
 
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { colorEstado, nombreEstado } from "@/constants/estados";
+import { obtenerMisReportes, sincronizarPendientes } from "@/services/reportes";
+import type { Reporte } from "@/tipos/reporte";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { obtenerReportes } from '@/services/almacenamientoReportes';
-import type { Reporte } from '@/tipos/reporte';
-
-function nombreEstado(estado: Reporte['estadoActual']): string {
-  switch (estado) {
-    case 'RECIBIDO':
-      return 'Recibido';
-    case 'EN_REVISION':
-      return 'En revisión';
-    case 'ASIGNADO_CUADRILLA':
-      return 'Asignado a una cuadrilla';
-    case 'RESUELTO':
-      return 'Resuelto';
-    case 'RECHAZADO':
-      return 'Rechazado';
-    default:
-      return estado;
-  }
+function fechaCorta(iso: string): string {
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return iso;
+  return fecha.toLocaleDateString("es-AR");
 }
 
 export default function MisReportesScreen() {
@@ -35,10 +30,12 @@ export default function MisReportesScreen() {
     setError(false);
 
     try {
-      const guardados = await obtenerReportes();
-      setReportes(guardados);
+      // Los reportes creados sin conexión se suben solos acá.
+      await sincronizarPendientes();
+      const propios = await obtenerMisReportes();
+      setReportes(propios);
     } catch (e) {
-      console.error('Error al cargar Mis reportes:', e);
+      console.error("Error al cargar Mis reportes:", e);
       setError(true);
     } finally {
       setCargando(false);
@@ -48,7 +45,7 @@ export default function MisReportesScreen() {
   useFocusEffect(
     useCallback(() => {
       cargarReportes();
-    }, [cargarReportes])
+    }, [cargarReportes]),
   );
 
   return (
@@ -62,9 +59,7 @@ export default function MisReportesScreen() {
         </View>
       ) : error ? (
         <View style={styles.centrado}>
-          <ThemedText>
-            No se pudieron cargar los reportes guardados.
-          </ThemedText>
+          <ThemedText>No se pudieron cargar los reportes guardados.</ThemedText>
         </View>
       ) : reportes.length === 0 ? (
         <View style={styles.centrado}>
@@ -79,37 +74,58 @@ export default function MisReportesScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.contenidoLista}
           renderItem={({ item }) => (
-            <View style={styles.tarjeta}>
-              <ThemedText type="subtitle">{item.tipo}</ThemedText>
+            <Pressable
+              style={styles.tarjeta}
+              onPress={() =>
+                router.push({
+                  pathname: "/reportes/[id]",
+                  params: { id: item.id },
+                })
+              }
+            >
+              <View style={styles.fila}>
+                <ThemedText type="subtitle">{item.tipo}</ThemedText>
+                <View
+                  style={[
+                    styles.chip,
+                    { backgroundColor: colorEstado(item.estadoActual) },
+                  ]}
+                >
+                  <ThemedText style={styles.chipTexto}>
+                    {nombreEstado(item.estadoActual)}
+                  </ThemedText>
+                </View>
+              </View>
+
+              <ThemedText>Código: {item.codigoSeguimiento}</ThemedText>
 
               <ThemedText>
-                Código: {item.codigoSeguimiento}
+                {item.descripcionTexto || "Sin descripción escrita"}
               </ThemedText>
 
-              <ThemedText>
-                Estado: {nombreEstado(item.estadoActual)}
-              </ThemedText>
+              <ThemedText>Ubicación: {item.direccionDescripcion}</ThemedText>
 
-              <ThemedText>
-                {item.descripcionTexto || 'Sin descripción'}
-              </ThemedText>
+              <View style={styles.fila}>
+                <ThemedText>
+                  {fechaCorta(item.cambios[0]?.fecha ?? "")}
+                </ThemedText>
 
-              <ThemedText>
-                Ubicación: {item.direccionDescripcion}
-              </ThemedText>
+                {item.vecinosSumados > 0 && (
+                  <ThemedText>
+                    {item.vecinosSumados}{" "}
+                    {item.vecinosSumados === 1
+                      ? "vecino se sumó"
+                      : "vecinos se sumaron"}
+                  </ThemedText>
+                )}
+              </View>
 
-              <ThemedText
-                style={styles.enlace}
-                onPress={() =>
-                  router.push({
-                    pathname: '/reportes/[id]',
-                    params: { id: item.id },
-                  })
-                }
-              >
-                Ver detalle
-              </ThemedText>
-            </View>
+              {!item.sincronizado && (
+                <ThemedText style={styles.pendiente}>
+                  Pendiente de sincronización
+                </ThemedText>
+              )}
+            </Pressable>
           )}
         />
       )}
@@ -134,18 +150,33 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     gap: 8,
+  },
+  fila: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  chip: {
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  chipTexto: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  pendiente: {
+    color: "#C1440E",
+    fontWeight: "bold",
   },
   centrado: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
-  },
-  enlace: {
-    marginTop: 4,
-    fontWeight: 'bold',
-    textDecorationLine: 'underline',
   },
 });

@@ -17,7 +17,6 @@ export default function HomeScreen() {
   const esOscuro = useColorScheme() === "dark";
 
   useEffect(() => {
-    // Temporizador de 2000 ms (2 segundos)
     const timer = setTimeout(() => {
       setMostrarSplash(false);
     }, 2000);
@@ -25,7 +24,6 @@ export default function HomeScreen() {
     return () => clearTimeout(timer);
   }, []);
 
-  // 1. PANTALLA TEMPORAL (Splash pantalla completa)
   if (mostrarSplash) {
     return (
       <View style={styles.splashContainer}>
@@ -37,7 +35,6 @@ export default function HomeScreen() {
     );
   }
 
-  // 2. PANTALLA PRINCIPAL
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -83,31 +80,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </Link>
           </ThemedView>
-
-          {/* Enlaces temporales para desarrollo */}
-          <ThemedView style={styles.debugLinks}>
-            <ThemedText type="small">
-              Pantallas de prueba (solo para desarrollo):
-            </ThemedText>
-            <Link href="/(main)" style={styles.link}>
-              <ThemedText type="link">Inicio vecino</ThemedText>
-            </Link>
-            <Link href="/(main)/reportes/nuevo" style={styles.link}>
-              <ThemedText type="link">Nuevo reporte</ThemedText>
-            </Link>
-            <Link href="/(main)/reportes" style={styles.link}>
-              <ThemedText type="link">Mis reportes</ThemedText>
-            </Link>
-            <Link href="/(main)/mapa" style={styles.link}>
-              <ThemedText type="link">Mapa de la ciudad</ThemedText>
-            </Link>
-            <Link href="/(operador)/bandeja" style={styles.link}>
-              <ThemedText type="link">Bandeja del operador</ThemedText>
-            </Link>
-            <Link href="/(operador)/cuadrillas" style={styles.link}>
-              <ThemedText type="link">Zonas y cuadrillas</ThemedText>
-            </Link>
-          </ThemedView>
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -115,17 +87,16 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Estilos de la Pantalla Splash a pantalla completa
   splashContainer: {
     flex: 1,
-    backgroundColor: "#0C5376", // Azul de fondo coincidente con la imagen
+    backgroundColor: "#0C5376",
     justifyContent: "center",
     alignItems: "center",
   },
   splashImagen: {
     width: "100%",
     height: "100%",
-    resizeMode: "cover", // Cubre toda la pantalla sin distorsionar
+    resizeMode: "cover",
   },
 
   // Estilos de la Pantalla Principal
@@ -185,13 +156,5 @@ const styles = StyleSheet.create({
   secondaryLabel: {
     textAlign: "center",
     color: "#FFFFFF",
-  },
-  debugLinks: {
-    width: "100%",
-    marginTop: 24,
-    gap: 4,
-  },
-  link: {
-    marginTop: 4,
   },
 });

@@ -1,334 +1,416 @@
-import * as Location from 'expo-location';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
-} from 'react-native';
-import MapView, { Callout, Marker } from 'react-native-maps';
+} from "react-native";
+import { WebView } from "react-native-webview";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
 import {
-  guardarReporte,
-  obtenerReportes,
-} from '@/services/almacenamientoReportes';
-import type { Reporte } from '@/tipos/reporte';
+  colorEstado,
+  ESTADOS_ORDENADOS,
+  nombreEstado,
+} from "@/constants/estados";
+import {
+  obtenerReportesPublicos,
+  obtenerTiposDeReporte,
+  sumarseAReporte,
+} from "@/services/reportes";
+import type { EstadoReporte, Reporte } from "@/tipos/reporte";
 
-const REGION_INICIAL = {
-  latitude: -33.0094,
-  longitude: -58.5172,
-  latitudeDelta: 0.04,
-  longitudeDelta: 0.04,
-};
+// Gualeguaychú, Entre Ríos (centro de la ciudad).
+const CENTRO = { lat: -33.0094, lon: -58.518 };
 
-function tieneCoordenadasValidas(reporte: Reporte) {
-  return (
-    Number.isFinite(reporte.latitud) &&
-    Number.isFinite(reporte.longitud) &&
-    Math.abs(reporte.latitud) <= 90 &&
-    Math.abs(reporte.longitud) <= 180 &&
-    !(reporte.latitud === 0 && reporte.longitud === 0)
-  );
-}
+/**
+ * El mapa es un Leaflet dentro de un WebView: así funciona en Expo Go
+ * sin API key de Google (react-native-maps queda negro en Android sin
+ * clave). Los marcadores se inyectan como circleMarkers de colores y
+ * los toques vuelven por ReactNativeWebView.postMessage.
+ */
+const HTML_MAPA = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      html, body, #mapa { height: 100%; margin: 0; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="mapa"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+      var mapa = L.map("mapa").setView([${CENTRO.lat}, ${CENTRO.lon}], 15);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(mapa);
+
+      var capaMarcadores = L.layerGroup().addTo(mapa);
+      var miUbicacion = null;
+
+      mapa.on("click", function () {
+        window.ReactNativeWebView.postMessage("__mapa__");
+      });
+
+      window.colocarMarcadores = function (json) {
+        capaMarcadores.clearLayers();
+        var datos = JSON.parse(json);
+        datos.forEach(function (r) {
+          var m = L.circleMarker([r.latitud, r.longitud], {
+            radius: 10,
+            color: "#ffffff",
+            weight: 2,
+            fillColor: r.color,
+            fillOpacity: 1,
+          }).addTo(capaMarcadores);
+          m.on("click", function (e) {
+            L.DomEvent.stopPropagation(e);
+            window.ReactNativeWebView.postMessage(r.id);
+          });
+        });
+        return datos.length;
+      };
+
+      window.centrarEn = function (lat, lon) {
+        mapa.flyTo([lat, lon], 16);
+        if (miUbicacion) mapa.removeLayer(miUbicacion);
+        miUbicacion = L.circleMarker([lat, lon], {
+          radius: 8,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: "#003785",
+          fillOpacity: 1,
+        }).addTo(mapa);
+      };
+    </script>
+  </body>
+</html>`;
 
 export default function MapaReportesScreen() {
-  const mapaRef = useRef<MapView | null>(null);
+  const webViewRef = useRef<WebView>(null);
+  const [mapaListo, setMapaListo] = useState(false);
 
   const [reportes, setReportes] = useState<Reporte[]>([]);
+  const [tipos, setTipos] = useState<string[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [tipoFiltro, setTipoFiltro] = useState('TODOS');
-  const [reporteSeleccionado, setReporteSeleccionado] =
-    useState<Reporte | null>(null);
-  const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
-  const [guardando, setGuardando] = useState(false);
-  const [mensaje, setMensaje] = useState('');
+  const [error, setError] = useState(false);
+
+  const [filtroTipo, setFiltroTipo] = useState<string | null>(null);
+  const [filtroEstado, setFiltroEstado] = useState<EstadoReporte | null>(null);
+
+  const [seleccionado, setSeleccionado] = useState<Reporte | null>(null);
+  const [ubicacionUsuario, setUbicacionUsuario] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [sumando, setSumando] = useState(false);
+
+  const cargarDatos = useCallback(async () => {
+    setCargando(true);
+    setError(false);
+    try {
+      const [publicos, tiposApi] = await Promise.all([
+        obtenerReportesPublicos(),
+        obtenerTiposDeReporte(),
+      ]);
+      setReportes(publicos);
+      setTipos(tiposApi.map((tipo) => tipo.nombre));
+    } catch (e) {
+      console.error("Error al cargar el mapa de reportes:", e);
+      setError(true);
+    } finally {
+      setCargando(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      let activo = true;
-
-      async function cargarYUbicarReportes() {
-        setCargando(true);
-        setMensaje('');
-
-        try {
-          const guardados = await obtenerReportes();
-
-          if (!activo) return;
-
-          setReportes(guardados);
-
-          const publicosConUbicacion = guardados.filter(
-            (reporte) =>
-              reporte.esPublico && tieneCoordenadasValidas(reporte)
-          );
-
-          if (publicosConUbicacion.length > 0) {
-            const primero = publicosConUbicacion[0];
-
-            mapaRef.current?.animateToRegion(
-              {
-                latitude: primero.latitud,
-                longitude: primero.longitud,
-                latitudeDelta: 0.04,
-                longitudeDelta: 0.04,
-              },
-              700
-            );
-          }
-        } catch (error) {
-          console.error('Error al cargar reportes para el mapa:', error);
-
-          if (activo) {
-            setMensaje('No se pudieron cargar los reportes.');
-          }
-        } finally {
-          if (activo) {
-            setCargando(false);
-          }
-        }
-      }
-
-      cargarYUbicarReportes();
-
-      return () => {
-        activo = false;
-      };
-    }, [])
+      cargarDatos();
+    }, [cargarDatos]),
   );
 
-  const reportesPublicos = reportes.filter(
-    (reporte) => reporte.esPublico && tieneCoordenadasValidas(reporte)
+  const reportesFiltrados = useMemo(
+    () =>
+      reportes.filter(
+        (reporte) =>
+          (!filtroTipo || reporte.tipo === filtroTipo) &&
+          (!filtroEstado || reporte.estadoActual === filtroEstado),
+      ),
+    [reportes, filtroTipo, filtroEstado],
   );
 
-  const tiposDisponibles = [
-    'TODOS',
-    ...Array.from(new Set(reportesPublicos.map((reporte) => reporte.tipo))),
-  ];
-
-  const reportesFiltrados =
-    tipoFiltro === 'TODOS'
-      ? reportesPublicos
-      : reportesPublicos.filter((reporte) => reporte.tipo === tipoFiltro);
-
-  async function centrarEnMiUbicacion() {
-    setMensaje('Solicitando permiso de ubicación...');
-
+  const centrarEnMiUbicacion = async () => {
     try {
-      const permiso =
-        await Location.requestForegroundPermissionsAsync();
+      const permiso = await Location.requestForegroundPermissionsAsync();
 
-      setMensaje(`Resultado del permiso: ${permiso.status}`);
-
-      if (permiso.status !== 'granted') {
-        setMostrarUbicacion(false);
+      if (!permiso.granted) {
+        Alert.alert(
+          "Permiso de ubicación",
+          "Sin ubicación el mapa funciona igual, pero no podemos mostrarte los reportes cercanos a vos.",
+        );
         return;
       }
 
-      setMensaje('Permiso concedido. Obteniendo coordenadas...');
-
-      const ubicacion = await Location.getCurrentPositionAsync({
+      const posicion = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
 
-      setMensaje(
-        `Ubicación obtenida: ${ubicacion.coords.latitude}, ${ubicacion.coords.longitude}`
-      );
-
-      const region = {
-        latitude: ubicacion.coords.latitude,
-        longitude: ubicacion.coords.longitude,
-        latitudeDelta: 0.015,
-        longitudeDelta: 0.015,
+      const coordenadas = {
+        latitude: posicion.coords.latitude,
+        longitude: posicion.coords.longitude,
       };
 
-      setMostrarUbicacion(true);
-      mapaRef.current?.animateToRegion(region, 700);
-    } catch (error) {
-      console.error('Error al obtener la ubicación:', error);
-      setMensaje(`Error de ubicación: ${String(error)}`);
+      setUbicacionUsuario(coordenadas);
+      webViewRef.current?.injectJavaScript(
+        `window.centrarEn(${coordenadas.latitude}, ${coordenadas.longitude}); true;`,
+      );
+    } catch (e) {
+      console.error("Error al obtener la ubicación:", e);
+      Alert.alert(
+        "Error",
+        "No se pudo obtener tu ubicación. El mapa sigue funcionando normalmente.",
+      );
     }
-  }
+  };
 
-  async function sumarseAlReporte(reporte: Reporte) {
-    if (guardando) return;
+  // Cada vez que cambian los filtros o llegan datos, se re-dibujan
+  // los marcadores dentro del WebView.
+  useEffect(() => {
+    if (!mapaListo) return;
+    const datos = reportesFiltrados.map((r) => ({
+      id: r.id,
+      latitud: r.latitud,
+      longitud: r.longitud,
+      color: colorEstado(r.estadoActual),
+    }));
+    webViewRef.current?.injectJavaScript(
+      `window.colocarMarcadores(${JSON.stringify(JSON.stringify(datos))}); true;`,
+    );
+  }, [reportesFiltrados, mapaListo]);
 
-    setGuardando(true);
-    setMensaje('');
+  const manejarMensajeDelMapa = (evento: { nativeEvent: { data: string } }) => {
+    const data = evento.nativeEvent.data;
+    if (data === "__mapa__") {
+      setSeleccionado(null);
+      return;
+    }
+    const reporte = reportes.find((item) => item.id === data);
+    if (reporte) setSeleccionado(reporte);
+  };
+
+  const sumarme = async (reporte: Reporte) => {
+    if (sumando) return;
 
     try {
-      const actualizado: Reporte = {
-        ...reporte,
-        vecinosSumados: reporte.vecinosSumados + 1,
-      };
+      setSumando(true);
+      const actualizado = await sumarseAReporte(reporte.id);
 
-      await guardarReporte(actualizado);
+      if (!actualizado) {
+        Alert.alert("Error", "No se encontró el reporte.");
+        return;
+      }
 
-      setReportes((anteriores) =>
-        anteriores.map((item) =>
-          item.id === actualizado.id ? actualizado : item
-        )
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      setReportes((actuales) =>
+        actuales.map((item) =>
+          item.id === actualizado.id ? actualizado : item,
+        ),
       );
-
-      setReporteSeleccionado(actualizado);
-      setMensaje('Tu adhesión quedó registrada en este dispositivo.');
-    } catch (error) {
-      console.error('Error al sumarse al reporte:', error);
-      setMensaje('No se pudo registrar la adhesión.');
+      setSeleccionado(actualizado);
+    } catch (e) {
+      console.error("Error al sumarse al reporte:", e);
+      Alert.alert("Error", "No te pudimos sumar al reporte. Intentá de nuevo.");
     } finally {
-      setGuardando(false);
+      setSumando(false);
     }
+  };
+
+  if (cargando) {
+    return (
+      <ThemedView style={styles.centrado}>
+        <ActivityIndicator size="large" />
+        <ThemedText>Cargando el mapa de reportes...</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (error) {
+    return (
+      <ThemedView style={styles.centrado}>
+        <ThemedText type="title">No se pudo cargar el mapa</ThemedText>
+        <ThemedText>Volvé a intentarlo en unos segundos.</ThemedText>
+      </ThemedView>
+    );
   }
 
   return (
     <ThemedView style={styles.contenedor}>
-      <ThemedText type="title">Mapa de reportes</ThemedText>
-
-      <ThemedText style={styles.descripcion}>
-        Explorá los reclamos públicos y seleccioná un marcador para ver sus
-        detalles.
-      </ThemedText>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filtros}
-      >
-        {tiposDisponibles.map((tipo) => {
-          const seleccionado = tipoFiltro === tipo;
-
-          return (
+      {/* Filtros por tipo y estado */}
+      <View style={styles.filtros}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={styles.filaFiltros}>
             <Pressable
-              key={tipo}
-              onPress={() => {
-                setTipoFiltro(tipo);
-                setReporteSeleccionado(null);
-              }}
-              style={[
-                styles.filtro,
-                seleccionado && styles.filtroActivo,
-              ]}
+              style={[styles.chipFiltro, !filtroTipo && styles.chipActivo]}
+              onPress={() => setFiltroTipo(null)}
             >
               <ThemedText
-                style={[
-                  styles.textoFiltro,
-                  seleccionado && styles.textoFiltroActivo,
-                ]}
+                style={!filtroTipo ? styles.chipTextoActivo : undefined}
               >
-                {tipo === 'TODOS' ? 'Todos' : tipo}
+                Todos
               </ThemedText>
             </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      <View style={styles.mapaContenedor}>
-        <MapView
-          ref={mapaRef}
-          style={styles.mapa}
-          initialRegion={REGION_INICIAL}
-          showsUserLocation={mostrarUbicacion}
-          showsMyLocationButton={false}
-          toolbarEnabled
-        >
-          {reportesFiltrados.map((reporte) => (
-            <Marker
-              key={reporte.id}
-              coordinate={{
-                latitude: reporte.latitud,
-                longitude: reporte.longitud,
-              }}
-              title={reporte.tipo}
-              description={reporte.direccionDescripcion}
-              onPress={() => setReporteSeleccionado(reporte)}
-            >
-              <Callout onPress={() => setReporteSeleccionado(reporte)}>
-                <View style={styles.callout}>
-                  <ThemedText type="subtitle">{reporte.tipo}</ThemedText>
-                  <ThemedText>{reporte.direccionDescripcion}</ThemedText>
-                  <ThemedText>
-                    Estado: {reporte.estadoActual.replace(/_/g, ' ')}
-                  </ThemedText>
-                  <ThemedText>
-                    Tocá para ver las opciones del reporte.
-                  </ThemedText>
-                </View>
-              </Callout>
-            </Marker>
-          ))}
-        </MapView>
-
-        <Pressable
-          style={styles.botonUbicacion}
-          onPress={centrarEnMiUbicacion}
-        >
-          <ThemedText style={styles.textoBoton}>Mi ubicación</ThemedText>
-        </Pressable>
-
-        {cargando && (
-          <View style={styles.cargando}>
-            <ActivityIndicator size="large" />
-            <ThemedText>Cargando reportes...</ThemedText>
+            {tipos.map((tipo) => (
+              <Pressable
+                key={tipo}
+                style={[
+                  styles.chipFiltro,
+                  filtroTipo === tipo && styles.chipActivo,
+                ]}
+                onPress={() => setFiltroTipo(filtroTipo === tipo ? null : tipo)}
+              >
+                <ThemedText
+                  style={
+                    filtroTipo === tipo ? styles.chipTextoActivo : undefined
+                  }
+                >
+                  {tipo}
+                </ThemedText>
+              </Pressable>
+            ))}
           </View>
-        )}
+        </ScrollView>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={styles.filaFiltros}>
+            {ESTADOS_ORDENADOS.map((estado) => (
+              <Pressable
+                key={estado}
+                style={[
+                  styles.chipFiltro,
+                  {
+                    borderColor: colorEstado(estado),
+                    backgroundColor:
+                      filtroEstado === estado
+                        ? colorEstado(estado)
+                        : "transparent",
+                  },
+                ]}
+                onPress={() =>
+                  setFiltroEstado(filtroEstado === estado ? null : estado)
+                }
+              >
+                <ThemedText
+                  style={
+                    filtroEstado === estado
+                      ? styles.chipTextoActivo
+                      : { color: colorEstado(estado) }
+                  }
+                >
+                  {nombreEstado(estado)}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
       </View>
 
-      {!cargando && reportesFiltrados.length === 0 && (
-        <ThemedText style={styles.aviso}>
-          No hay reportes públicos con coordenadas para este filtro.
-        </ThemedText>
-      )}
+      {/* Mapa con Leaflet dentro de un WebView: funciona en Expo Go
+          sin API key de Google. */}
+      <WebView
+        ref={webViewRef}
+        style={styles.mapa}
+        originWhitelist={["*"]}
+        source={{ html: HTML_MAPA }}
+        javaScriptEnabled
+        domStorageEnabled
+        onLoadEnd={() => setMapaListo(true)}
+        onMessage={manejarMensajeDelMapa}
+      />
 
-      {reporteSeleccionado && (
-        <View style={styles.tarjeta}>
-          <ThemedText type="subtitle">
-            {reporteSeleccionado.tipo}
-          </ThemedText>
+      {/* Botón de ubicación */}
+      <Pressable style={styles.botonUbicacion} onPress={centrarEnMiUbicacion}>
+        <ThemedText style={styles.botonUbicacionTexto}>Cerca de mí</ThemedText>
+      </Pressable>
 
-          <ThemedText>
-            {reporteSeleccionado.descripcionTexto || 'Sin descripción'}
-          </ThemedText>
-
-          <ThemedText>
-            Dirección: {reporteSeleccionado.direccionDescripcion}
-          </ThemedText>
-
-          <ThemedText>
-            Estado:{' '}
-            {reporteSeleccionado.estadoActual.replace(/_/g, ' ')}
-          </ThemedText>
-
-          <ThemedText>
-            Vecinos sumados: {reporteSeleccionado.vecinosSumados}
-          </ThemedText>
-
-          <Pressable
-            disabled={guardando}
-            onPress={() => sumarseAlReporte(reporteSeleccionado)}
-            style={[
-              styles.botonAdhesion,
-              guardando && styles.botonDeshabilitado,
-            ]}
-          >
-            <ThemedText style={styles.textoBoton}>
-              {guardando ? 'Guardando...' : 'Sumarme a este reporte'}
+      {/* Tarjeta del reporte seleccionado */}
+      {seleccionado && (
+        <View style={styles.tarjetaSeleccionada}>
+          <View style={styles.fila}>
+            <ThemedText type="subtitle" style={styles.tarjetaTitulo}>
+              {seleccionado.tipo}
             </ThemedText>
-          </Pressable>
+            <View
+              style={[
+                styles.chipEstado,
+                {
+                  backgroundColor: colorEstado(seleccionado.estadoActual),
+                },
+              ]}
+            >
+              <ThemedText style={styles.chipTextoActivo}>
+                {nombreEstado(seleccionado.estadoActual)}
+              </ThemedText>
+            </View>
+          </View>
 
-          <Pressable
-            onPress={() => setReporteSeleccionado(null)}
-            style={styles.botonCerrar}
-          >
-            <ThemedText>Cerrar detalle</ThemedText>
-          </Pressable>
+          <ThemedText>{seleccionado.direccionDescripcion}</ThemedText>
+
+          {seleccionado.vecinosSumados > 0 && (
+            <ThemedText>
+              {seleccionado.vecinosSumados}{" "}
+              {seleccionado.vecinosSumados === 1
+                ? "vecino se sumó"
+                : "vecinos se sumaron"}
+            </ThemedText>
+          )}
+
+          <View style={styles.filaBotones}>
+            <Pressable
+              style={styles.boton}
+              onPress={() =>
+                router.push({
+                  pathname: "/reportes/[id]",
+                  params: { id: seleccionado.id },
+                })
+              }
+            >
+              <ThemedText style={styles.botonTexto}>Ver detalle</ThemedText>
+            </Pressable>
+
+            {seleccionado.yaMeSumé ? (
+              <View style={[styles.boton, styles.botonDeshabilitado]}>
+                <ThemedText style={styles.botonTexto}>Ya te sumaste</ThemedText>
+              </View>
+            ) : (
+              <Pressable
+                style={[styles.boton, styles.botonSumarse]}
+                disabled={sumando}
+                onPress={() => sumarme(seleccionado)}
+              >
+                <ThemedText style={styles.botonTexto}>
+                  {sumando ? "Sumando..." : "Sumarme al reclamo"}
+                </ThemedText>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
-
-      {mensaje ? <ThemedText style={styles.aviso}>{mensaje}</ThemedText> : null}
     </ThemedView>
   );
 }
@@ -336,87 +418,109 @@ export default function MapaReportesScreen() {
 const styles = StyleSheet.create({
   contenedor: {
     flex: 1,
-    padding: 12,
-    gap: 10,
   },
-  descripcion: {
-    marginBottom: 2,
+  centrado: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    padding: 16,
   },
   filtros: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  filaFiltros: {
+    flexDirection: "row",
     gap: 8,
-    paddingVertical: 4,
+    paddingVertical: 2,
   },
-  filtro: {
+  chipFiltro: {
     borderWidth: 1,
-    borderColor: '#246B45',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    borderColor: "#888888",
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
   },
-  filtroActivo: {
-    backgroundColor: '#246B45',
+  chipActivo: {
+    backgroundColor: "#003785",
+    borderColor: "#003785",
   },
-  textoFiltro: {
-    fontSize: 13,
-  },
-  textoFiltroActivo: {
-    color: '#FFFFFF',
-  },
-  mapaContenedor: {
-    flex: 1,
-    minHeight: 260,
-    borderRadius: 12,
-    overflow: 'hidden',
+  chipTextoActivo: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "bold",
   },
   mapa: {
     flex: 1,
   },
   botonUbicacion: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: '#246B45',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    position: "absolute",
+    top: 120,
+    right: 16,
+    backgroundColor: "#003785",
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    elevation: 4,
   },
-  textoBoton: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    textAlign: 'center',
+  botonUbicacionTexto: {
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
-  cargando: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: '#FFFFFFCC',
+  atribucion: {
+    position: "absolute",
+    bottom: 4,
+    right: 6,
+    fontSize: 10,
+    color: "#555555",
+    backgroundColor: "rgba(255,255,255,0.7)",
+    paddingHorizontal: 4,
+    borderRadius: 3,
   },
-  aviso: {
-    paddingVertical: 6,
+  tarjetaSeleccionada: {
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderColor: "#CCCCCC",
+    padding: 16,
+    gap: 8,
   },
-  tarjeta: {
-    borderWidth: 1,
-    borderColor: '#888888',
+  tarjetaTitulo: {
+    flex: 1,
+  },
+  fila: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  chipEstado: {
     borderRadius: 12,
-    padding: 14,
-    gap: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
   },
-  botonAdhesion: {
-    backgroundColor: '#246B45',
+  filaBotones: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  boton: {
+    flex: 1,
+    backgroundColor: "#003785",
     borderRadius: 10,
-    padding: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  botonSumarse: {
+    backgroundColor: "#2E7D32",
   },
   botonDeshabilitado: {
-    opacity: 0.6,
+    backgroundColor: "#888888",
   },
-  botonCerrar: {
-    alignSelf: 'flex-start',
-    paddingVertical: 8,
-  },
-  callout: {
-    width: 210,
-    gap: 6,
-    padding: 4,
+  botonTexto: {
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
 });

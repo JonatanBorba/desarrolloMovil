@@ -1,12 +1,6 @@
-
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import {
-  Stack,
-  router,
-  useFocusEffect,
-  useLocalSearchParams,
-} from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -15,28 +9,14 @@ import {
   ScrollView,
   StyleSheet,
   View,
-} from 'react-native';
+} from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { obtenerReportePorId } from '@/services/almacenamientoReportes';
-import type { EstadoReporte, Reporte } from '@/tipos/reporte';
-import QRCode from 'react-native-qrcode-svg';
-
-function nombreEstado(estado: EstadoReporte): string {
-  switch (estado) {
-    case 'RECIBIDO':
-      return 'Recibido';
-    case 'EN_REVISION':
-      return 'En revisión';
-    case 'ASIGNADO_CUADRILLA':
-      return 'Asignado a una cuadrilla';
-    case 'RESUELTO':
-      return 'Resuelto';
-    case 'RECHAZADO':
-      return 'Rechazado';
-  }
-}
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { colorEstado, nombreEstado } from "@/constants/estados";
+import { obtenerReportePorIdConPublicos } from "@/services/reportes";
+import type { Reporte } from "@/tipos/reporte";
 
 function fechaLegible(fecha: string): string {
   const valor = new Date(fecha);
@@ -45,14 +25,12 @@ function fechaLegible(fecha: string): string {
     return fecha;
   }
 
-  return valor.toLocaleString('es-AR');
+  return valor.toLocaleString("es-AR");
 }
 
 export default function DetalleReporteScreen() {
   const parametros = useLocalSearchParams<{ id: string | string[] }>();
-  const id = Array.isArray(parametros.id)
-    ? parametros.id[0]
-    : parametros.id;
+  const id = Array.isArray(parametros.id) ? parametros.id[0] : parametros.id;
 
   const [reporte, setReporte] = useState<Reporte | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -85,10 +63,10 @@ export default function DetalleReporteScreen() {
     setError(false);
 
     try {
-      const guardado = await obtenerReportePorId(id);
+      const guardado = await obtenerReportePorIdConPublicos(id);
       setReporte(guardado);
     } catch (e) {
-      console.error('Error al cargar el detalle del reporte:', e);
+      console.error("Error al cargar el detalle del reporte:", e);
       setReporte(null);
       setError(true);
     } finally {
@@ -99,7 +77,7 @@ export default function DetalleReporteScreen() {
   useFocusEffect(
     useCallback(() => {
       void cargarReporte();
-    }, [cargarReporte])
+    }, [cargarReporte]),
   );
 
   const alternarReproduccion = () => {
@@ -121,7 +99,7 @@ export default function DetalleReporteScreen() {
   if (cargando) {
     return (
       <ThemedView style={styles.contenedor}>
-        <Stack.Screen options={{ title: 'Detalle del reporte' }} />
+        <Stack.Screen options={{ title: "Detalle del reporte" }} />
         <ActivityIndicator size="large" />
         <ThemedText>Cargando detalle del reporte...</ThemedText>
       </ThemedView>
@@ -131,10 +109,8 @@ export default function DetalleReporteScreen() {
   if (error) {
     return (
       <ThemedView style={styles.contenedor}>
-        <Stack.Screen options={{ title: 'Detalle del reporte' }} />
-        <ThemedText type="title">
-          No se pudo cargar el reporte
-        </ThemedText>
+        <Stack.Screen options={{ title: "Detalle del reporte" }} />
+        <ThemedText type="title">No se pudo cargar el reporte</ThemedText>
         <ThemedText>Volvé a intentarlo.</ThemedText>
       </ThemedView>
     );
@@ -143,7 +119,7 @@ export default function DetalleReporteScreen() {
   if (!reporte) {
     return (
       <ThemedView style={styles.contenedor}>
-        <Stack.Screen options={{ title: 'Detalle del reporte' }} />
+        <Stack.Screen options={{ title: "Detalle del reporte" }} />
         <ThemedText type="title">Reporte no encontrado</ThemedText>
         <ThemedText>
           No encontramos un reporte guardado con ese identificador.
@@ -157,9 +133,20 @@ export default function DetalleReporteScreen() {
     reporte.fotoSecundariaUrlLocal ?? reporte.fotoSecundariaUrlRemota,
   ].filter((foto): foto is string => Boolean(foto));
 
+  const fotoArreglo =
+    reporte.fotoArregloUrlLocal ?? reporte.fotoArregloUrlRemota;
+
+  const motivoRechazo =
+    reporte.estadoActual === "RECHAZADO"
+      ? ([...reporte.cambios]
+          .reverse()
+          .find((cambio) => cambio.estado === "RECHAZADO")?.comentario ??
+        "El municipio no registró un motivo.")
+      : null;
+
   return (
     <ThemedView style={styles.contenedor}>
-      <Stack.Screen options={{ title: 'Detalle del reporte' }} />
+      <Stack.Screen options={{ title: "Detalle del reporte" }} />
 
       <ScrollView contentContainerStyle={styles.contenido}>
         <ThemedText type="title">Detalle del reporte</ThemedText>
@@ -171,49 +158,44 @@ export default function DetalleReporteScreen() {
             Código de seguimiento: {reporte.codigoSeguimiento}
           </ThemedText>
 
-          <ThemedText>
-            Estado actual: {nombreEstado(reporte.estadoActual)}
-          </ThemedText>
+          <View style={styles.fila}>
+            <ThemedText>Estado actual:</ThemedText>
+            <View
+              style={[
+                styles.chip,
+                { backgroundColor: colorEstado(reporte.estadoActual) },
+              ]}
+            >
+              <ThemedText style={styles.chipTexto}>
+                {nombreEstado(reporte.estadoActual)}
+              </ThemedText>
+            </View>
+          </View>
+
+          {reporte.vecinosSumados > 0 && (
+            <ThemedText>
+              {reporte.vecinosSumados}{" "}
+              {reporte.vecinosSumados === 1
+                ? "vecino se sumó a este reclamo"
+                : "vecinos se sumaron a este reclamo"}
+            </ThemedText>
+          )}
 
           <ThemedText>
-            Descripción: {reporte.descripcionTexto || 'Sin descripción'}
+            Descripción: {reporte.descripcionTexto || "Sin descripción"}
           </ThemedText>
-
+          <ThemedText>Dirección: {reporte.direccionDescripcion}</ThemedText>
           <ThemedText>
-            Dirección: {reporte.direccionDescripcion}
-          </ThemedText>
-
-          <ThemedText>
-            Fecha de creación: {fechaLegible(reporte.cambios[0]?.fecha ?? '')}
+            Fecha de creación: {fechaLegible(reporte.cambios[0]?.fecha ?? "")}
           </ThemedText>
         </View>
 
-        {reporte.estadoActual === 'RECIBIDO' ? (
-          <View style={styles.edicion}>
-            <ThemedText>
-              Este reporte todavía puede modificarse.
+        {motivoRechazo && (
+          <View style={styles.rechazo}>
+            <ThemedText type="subtitle" style={styles.rechazoTitulo}>
+              Motivo del rechazo
             </ThemedText>
-
-            <Pressable
-              accessibilityRole="button"
-              style={styles.botonEditar}
-              onPress={() =>
-                router.push({
-                  pathname: '/(main)/reportes/nuevo',
-                  params: { id: reporte.id },
-                })
-              }
-            >
-              <ThemedText style={styles.textoBotonEditar}>
-                ✎ Editar reporte
-              </ThemedText>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.avisoEdicion}>
-            <ThemedText>
-              Este reporte ya está siendo gestionado y no puede modificarse.
-            </ThemedText>
+            <ThemedText>{motivoRechazo}</ThemedText>
           </View>
         )}
 
@@ -240,21 +222,34 @@ export default function DetalleReporteScreen() {
           <ThemedText>No hay fotos disponibles.</ThemedText>
         )}
 
-        <ThemedText type="subtitle">Historial de estados</ThemedText>
+        {fotoArreglo && (
+          <>
+            <ThemedText type="subtitle">Foto del arreglo</ThemedText>
+            <Image
+              source={{ uri: fotoArreglo }}
+              style={styles.fotoGrande}
+              resizeMode="cover"
+            />
+          </>
+        )}
+
+        <ThemedText type="subtitle">Qué fue pasando</ThemedText>
 
         {reporte.cambios.length > 0 ? (
           reporte.cambios.map((cambio) => (
             <View key={cambio.id} style={styles.evento}>
-              <View style={styles.punto} />
-
+              <View
+                style={[
+                  styles.punto,
+                  { backgroundColor: colorEstado(cambio.estado) },
+                ]}
+              />
               <View style={styles.eventoContenido}>
                 <ThemedText type="subtitle">
                   {nombreEstado(cambio.estado)}
                 </ThemedText>
 
-                <ThemedText>
-                  {fechaLegible(cambio.fecha)}
-                </ThemedText>
+                <ThemedText>{fechaLegible(cambio.fecha)}</ThemedText>
 
                 {cambio.comentario ? (
                   <ThemedText>{cambio.comentario}</ThemedText>
@@ -263,53 +258,43 @@ export default function DetalleReporteScreen() {
             </View>
           ))
         ) : (
-          <ThemedText>
-            Todavía no hay cambios de estado registrados.
-          </ThemedText>
+          <ThemedText>Todavía no hay cambios de estado registrados.</ThemedText>
         )}
 
         <ThemedText type="subtitle">Descripción de audio</ThemedText>
 
         {audioUrl ? (
           <View style={styles.audioTarjeta}>
-            <ThemedText>
-              Este reporte tiene una grabación adjunta.
-            </ThemedText>
+            <ThemedText>Este reporte tiene una grabación adjunta.</ThemedText>
 
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
-                estadoAudio.playing ? 'Pausar audio' : 'Reproducir audio'
+                estadoAudio.playing ? "Pausar audio" : "Reproducir audio"
               }
               style={styles.botonAudio}
               onPress={alternarReproduccion}
             >
               <ThemedText style={styles.textoBotonAudio}>
-                {estadoAudio.playing
-                  ? '⏸ Pausar audio'
-                  : '▶ Escuchar audio'}
+                {estadoAudio.playing ? "⏸ Pausar audio" : "▶ Escuchar audio"}
               </ThemedText>
             </Pressable>
 
             {estadoAudio.isLoaded ? (
               <ThemedText>
-                {Math.floor(estadoAudio.currentTime)} s /{' '}
+                {Math.floor(estadoAudio.currentTime)} s /{" "}
                 {Math.floor(estadoAudio.duration)} s
               </ThemedText>
             ) : null}
           </View>
         ) : (
-          <ThemedText>
-            Este reporte no tiene audio adjunto.
-          </ThemedText>
+          <ThemedText>Este reporte no tiene audio adjunto.</ThemedText>
         )}
 
         <ThemedText type="subtitle">Código para seguimiento</ThemedText>
 
         <View style={styles.codigo}>
-          <ThemedText type="title">
-            {reporte.codigoSeguimiento}
-          </ThemedText>
+          <ThemedText type="title">{reporte.codigoSeguimiento}</ThemedText>
 
           <QRCode
             value={reporte.codigoSeguimiento}
@@ -318,9 +303,7 @@ export default function DetalleReporteScreen() {
             color="#000000"
           />
 
-          <ThemedText>
-            Escaneá este QR para identificar el reclamo.
-          </ThemedText>
+          <ThemedText>Escaneá este QR para identificar el reclamo.</ThemedText>
 
           <ThemedText>
             Conservá también el código escrito para consultar el seguimiento.
@@ -369,7 +352,7 @@ const styles = StyleSheet.create({
   },
   tarjeta: {
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 12,
     padding: 16,
     gap: 10,
@@ -377,30 +360,30 @@ const styles = StyleSheet.create({
   edicion: {
     gap: 10,
     borderWidth: 1,
-    borderColor: '#27864A',
+    borderColor: "#27864A",
     borderRadius: 12,
     padding: 14,
   },
   avisoEdicion: {
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 12,
     padding: 14,
   },
   botonEditar: {
-    backgroundColor: '#246B45',
+    backgroundColor: "#246B45",
     paddingVertical: 14,
     paddingHorizontal: 18,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
   textoBotonEditar: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   fotos: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 12,
   },
   foto: {
@@ -408,8 +391,40 @@ const styles = StyleSheet.create({
     height: 145,
     borderRadius: 10,
   },
+  fila: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  chip: {
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  chipTexto: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  rechazo: {
+    borderWidth: 1,
+    borderColor: "#C62828",
+    borderRadius: 12,
+    padding: 16,
+    gap: 8,
+    backgroundColor: "rgba(198, 40, 40, 0.08)",
+  },
+  rechazoTitulo: {
+    color: "#C62828",
+  },
+  fotoGrande: {
+    width: "100%",
+    height: 220,
+    borderRadius: 12,
+  },
   evento: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     paddingBottom: 12,
   },
@@ -417,7 +432,6 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#27864A',
     marginTop: 5,
   },
   eventoContenido: {
@@ -426,55 +440,55 @@ const styles = StyleSheet.create({
   },
   audioTarjeta: {
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 12,
     padding: 16,
     gap: 12,
   },
   botonAudio: {
-    backgroundColor: '#246B45',
+    backgroundColor: "#246B45",
     paddingVertical: 14,
     paddingHorizontal: 18,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
   textoBotonAudio: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   codigo: {
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 12,
     padding: 16,
-    alignItems: 'center',
+    alignItems: "center",
     gap: 8,
   },
   modalFoto: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.96)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(0, 0, 0, 0.96)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   imagenAmpliada: {
-    width: '100%',
-    height: '85%',
+    width: "100%",
+    height: "85%",
   },
   botonCerrarFoto: {
-    position: 'absolute',
+    position: "absolute",
     top: 45,
     right: 20,
     zIndex: 1,
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#333333',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#333333",
+    justifyContent: "center",
+    alignItems: "center",
   },
   textoCerrarFoto: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 22,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
 });

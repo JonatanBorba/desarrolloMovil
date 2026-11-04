@@ -1,18 +1,17 @@
-
 import {
   AudioModule,
   RecordingPresets,
   setAudioModeAsync,
   useAudioRecorder,
   useAudioRecorderState,
-} from 'expo-audio';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Directory, File, Paths } from 'expo-file-system';
-import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
-import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+} from "expo-audio";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { Directory, File, Paths } from "expo-file-system";
+import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import { Stack, router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -24,34 +23,44 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-} from 'react-native';
+} from "react-native";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
 import {
   guardarReporte,
   obtenerReportePorId,
-} from '@/services/almacenamientoReportes';
-import type { Reporte } from '@/tipos/reporte';
+} from "@/services/almacenamientoReportes";
+import {
+  enviarReporte,
+  obtenerReportesCercanos,
+  obtenerTiposDeReporte,
+} from "@/services/reportes";
+import type { Reporte } from "@/tipos/reporte";
 
-const tiposProblema = [
-  'Baches',
-  'Luminarias',
-  'Ramas',
-  'Basura',
-  'Semáforos',
-  'Veredas',
-  'Otro',
-];
+async function copiarFotoADocumentos(
+  uri: string,
+  nombre: string,
+): Promise<string> {
+  const carpeta = new Directory(Paths.document, "reportes");
+  if (!carpeta.exists) {
+    carpeta.create();
+  }
+
+  const temporal = new File(uri);
+  const definitiva = new File(carpeta, nombre);
+  temporal.copy(definitiva);
+  return definitiva.uri;
+}
 
 function obtenerDirectorioTemporal() {
-  return new Directory(Paths.cache, 'reportes-temporales');
+  return new Directory(Paths.cache, "reportes-temporales");
 }
 
 async function guardarArchivoTemporal(
   uri: string,
   nombreBase: string,
-  extensionPredeterminada: string
+  extensionPredeterminada: string,
 ): Promise<string> {
   const directorio = obtenerDirectorioTemporal();
 
@@ -62,15 +71,14 @@ async function guardarArchivoTemporal(
     });
   }
 
-  const uriSinParametros = uri.split('?')[0].split('#')[0];
+  const uriSinParametros = uri.split("?")[0].split("#")[0];
   const extension =
-    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ??
-    extensionPredeterminada;
+    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ?? extensionPredeterminada;
 
   const archivoOriginal = new File(uri);
   const archivoTemporal = new File(
     directorio,
-    `${nombreBase}-${Date.now()}.${extension}`
+    `${nombreBase}-${Date.now()}.${extension}`,
   );
 
   archivoOriginal.copy(archivoTemporal);
@@ -83,7 +91,7 @@ function eliminarArchivoTemporal(uri: string | null) {
 
   try {
     const directorio = obtenerDirectorioTemporal();
-    const prefijo = directorio.uri.endsWith('/')
+    const prefijo = directorio.uri.endsWith("/")
       ? directorio.uri
       : `${directorio.uri}/`;
 
@@ -95,18 +103,18 @@ function eliminarArchivoTemporal(uri: string | null) {
       archivo.delete();
     }
   } catch (error) {
-    console.warn('No se pudo eliminar el archivo temporal:', error);
+    console.warn("No se pudo eliminar el archivo temporal:", error);
   }
 }
 
 async function guardarArchivoLocal(
   uri: string | null,
   nombreBase: string,
-  extensionPredeterminada: string
+  extensionPredeterminada: string,
 ): Promise<string | null> {
   if (!uri) return null;
 
-  const directorio = new Directory(Paths.document, 'reportes');
+  const directorio = new Directory(Paths.document, "reportes");
 
   if (!directorio.exists) {
     directorio.create({
@@ -115,15 +123,14 @@ async function guardarArchivoLocal(
     });
   }
 
-  const uriSinParametros = uri.split('?')[0].split('#')[0];
+  const uriSinParametros = uri.split("?")[0].split("#")[0];
   const extension =
-    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ??
-    extensionPredeterminada;
+    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ?? extensionPredeterminada;
 
   const archivoOriginal = new File(uri);
   const archivoDestino = new File(
     directorio,
-    `${nombreBase}-${Date.now()}.${extension}`
+    `${nombreBase}-${Date.now()}.${extension}`,
   );
 
   archivoOriginal.copy(archivoDestino);
@@ -155,10 +162,23 @@ export default function NuevoReporteScreen() {
   const [fotoSecundaria, setFotoSecundaria] = useState<string | null>(null);
   const [tomandoFotoSecundaria, setTomandoFotoSecundaria] = useState(false);
 
-  const [tipoProblema, setTipoProblema] = useState('');
-  const [descripcion, setDescripcion] = useState('');
+  const [tipoProblema, setTipoProblema] = useState("");
+  const [descripcion, setDescripcion] = useState("");
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [procesandoAudio, setProcesandoAudio] = useState(false);
+  const [tiposProblema, setTiposProblema] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelado = false;
+    obtenerTiposDeReporte()
+      .then((tipos) => {
+        if (!cancelado) setTiposProblema(tipos.map((t) => t.nombre));
+      })
+      .catch((e) => console.warn("No se pudo cargar el catálogo:", e));
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   const [coordenadas, setCoordenadas] = useState<{
     latitude: number;
@@ -166,7 +186,7 @@ export default function NuevoReporteScreen() {
   } | null>(null);
 
   const [cargandoUbicacion, setCargandoUbicacion] = useState(false);
-  const [direccion, setDireccion] = useState('');
+  const [direccion, setDireccion] = useState("");
   const [guardandoReporte, setGuardandoReporte] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
@@ -187,44 +207,40 @@ export default function NuevoReporteScreen() {
 
         if (!guardado) {
           Alert.alert(
-            'Reporte no encontrado',
-            'No se encontró el reporte que intentás editar.',
-            [{ text: 'Aceptar', onPress: () => router.back() }]
+            "Reporte no encontrado",
+            "No se encontró el reporte que intentás editar.",
+            [{ text: "Aceptar", onPress: () => router.back() }],
           );
           return;
         }
 
         setReporteOriginal(guardado);
 
-        if (guardado.estadoActual !== 'RECIBIDO') {
+        if (guardado.estadoActual !== "RECIBIDO") {
           setEdicionPermitida(false);
           return;
         }
 
         setEdicionPermitida(true);
         setFoto(
-          guardado.fotoPrincipalUrlLocal ??
-          guardado.fotoPrincipalUrlRemota
+          guardado.fotoPrincipalUrlLocal ?? guardado.fotoPrincipalUrlRemota,
         );
         setFotoSecundaria(
-          guardado.fotoSecundariaUrlLocal ??
-          guardado.fotoSecundariaUrlRemota
+          guardado.fotoSecundariaUrlLocal ?? guardado.fotoSecundariaUrlRemota,
         );
         setAudioUri(
           guardado.descripcionAudioUrlLocal ??
-          guardado.descripcionAudioUrlRemota
+            guardado.descripcionAudioUrlRemota,
         );
-        setDescripcion(guardado.descripcionTexto ?? '');
+        setDescripcion(guardado.descripcionTexto ?? "");
         setTipoProblema(guardado.tipo);
       } catch (error) {
-        console.error('Error al cargar el reporte para editar:', error);
+        console.error("Error al cargar el reporte para editar:", error);
 
         if (activo) {
-          Alert.alert(
-            'Error',
-            'No se pudo cargar el reporte para editar.',
-            [{ text: 'Aceptar', onPress: () => router.back() }]
-          );
+          Alert.alert("Error", "No se pudo cargar el reporte para editar.", [
+            { text: "Aceptar", onPress: () => router.back() },
+          ]);
         }
       } finally {
         if (activo) {
@@ -246,13 +262,12 @@ export default function NuevoReporteScreen() {
     try {
       setProcesandoAudio(true);
 
-      const permiso =
-        await AudioModule.requestRecordingPermissionsAsync();
+      const permiso = await AudioModule.requestRecordingPermissionsAsync();
 
       if (!permiso.granted) {
         Alert.alert(
-          'Permiso necesario',
-          'Necesitás permitir el acceso al micrófono para grabar la descripción.'
+          "Permiso necesario",
+          "Necesitás permitir el acceso al micrófono para grabar la descripción.",
         );
         return;
       }
@@ -265,9 +280,9 @@ export default function NuevoReporteScreen() {
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
     } catch (error) {
-      console.error('Error al iniciar la grabación:', error);
+      console.error("Error al iniciar la grabación:", error);
 
-      Alert.alert('Error', 'No se pudo iniciar la grabación de audio.');
+      Alert.alert("Error", "No se pudo iniciar la grabación de audio.");
     } finally {
       setProcesandoAudio(false);
     }
@@ -286,20 +301,20 @@ export default function NuevoReporteScreen() {
       if (uriGrabacion) {
         const nuevoAudioTemporal = await guardarArchivoTemporal(
           uriGrabacion,
-          'descripcion-audio',
-          'm4a'
+          "descripcion-audio",
+          "m4a",
         );
 
         eliminarArchivoTemporal(audioUri);
         setAudioUri(nuevoAudioTemporal);
 
         await Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Success
+          Haptics.NotificationFeedbackType.Success,
         );
       } else {
         Alert.alert(
-          'Error',
-          'La grabación terminó, pero no se encontró el archivo de audio.'
+          "Error",
+          "La grabación terminó, pero no se encontró el archivo de audio.",
         );
       }
 
@@ -308,8 +323,8 @@ export default function NuevoReporteScreen() {
         allowsRecording: false,
       });
     } catch (error) {
-      console.error('Error al detener la grabación:', error);
-      Alert.alert('Error', 'No se pudo finalizar la grabación.');
+      console.error("Error al detener la grabación:", error);
+      Alert.alert("Error", "No se pudo finalizar la grabación.");
     } finally {
       setProcesandoAudio(false);
     }
@@ -326,8 +341,8 @@ export default function NuevoReporteScreen() {
 
       if (!resultado.granted) {
         Alert.alert(
-          'Permiso necesario',
-          'Necesitás permitir el acceso a la cámara para sacar una foto.'
+          "Permiso necesario",
+          "Necesitás permitir el acceso a la cámara para sacar una foto.",
         );
         return;
       }
@@ -346,13 +361,11 @@ export default function NuevoReporteScreen() {
       if (resultado?.uri) {
         const nuevaFotoTemporal = await guardarArchivoTemporal(
           resultado.uri,
-          tomandoFotoSecundaria ? 'segunda-foto' : 'foto-principal',
-          'jpg'
+          tomandoFotoSecundaria ? "segunda-foto" : "foto-principal",
+          "jpg",
         );
 
-        await Haptics.impactAsync(
-          Haptics.ImpactFeedbackStyle.Medium
-        );
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         if (tomandoFotoSecundaria) {
           eliminarArchivoTemporal(fotoSecundaria);
@@ -365,11 +378,8 @@ export default function NuevoReporteScreen() {
         setMostrarCamara(false);
       }
     } catch (error) {
-      console.error('Error al tomar la foto:', error);
-      Alert.alert(
-        'Error',
-        'No se pudo tomar la foto. Intentá nuevamente.'
-      );
+      console.error("Error al tomar la foto:", error);
+      Alert.alert("Error", "No se pudo tomar la foto. Intentá nuevamente.");
     }
   };
 
@@ -380,19 +390,18 @@ export default function NuevoReporteScreen() {
 
   const elegirDeGaleria = async (esSegundaFoto = false) => {
     try {
-      const permiso =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permiso.granted) {
         Alert.alert(
-          'Permiso necesario',
-          'Necesitás permitir el acceso a las fotos para elegir una imagen.'
+          "Permiso necesario",
+          "Necesitás permitir el acceso a las fotos para elegir una imagen.",
         );
         return;
       }
 
       const resultado = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ["images"],
         allowsEditing: false,
         quality: 1,
       });
@@ -402,8 +411,8 @@ export default function NuevoReporteScreen() {
 
         const nuevaFotoTemporal = await guardarArchivoTemporal(
           uriImagen,
-          esSegundaFoto ? 'segunda-foto' : 'foto-principal',
-          'jpg'
+          esSegundaFoto ? "segunda-foto" : "foto-principal",
+          "jpg",
         );
 
         if (esSegundaFoto) {
@@ -415,11 +424,8 @@ export default function NuevoReporteScreen() {
         }
       }
     } catch (error) {
-      console.error('Error al elegir la imagen:', error);
-      Alert.alert(
-        'Error',
-        'No se pudo abrir la galería. Intentá nuevamente.'
-      );
+      console.error("Error al elegir la imagen:", error);
+      Alert.alert("Error", "No se pudo abrir la galería. Intentá nuevamente.");
     }
   };
 
@@ -427,26 +433,32 @@ export default function NuevoReporteScreen() {
     try {
       setCargandoUbicacion(true);
 
-      const permiso =
-        await Location.requestForegroundPermissionsAsync();
+      const permiso = await Location.requestForegroundPermissionsAsync();
 
       if (!permiso.granted) {
         Alert.alert(
-          'Permiso de ubicación',
-          'No se autorizó el acceso a la ubicación. Podés volver a intentarlo.'
+          "Permiso de ubicación",
+          "No se autorizó el acceso a la ubicación. Podés volver a intentarlo.",
         );
         return;
       }
 
-      const serviciosActivos =
-        await Location.hasServicesEnabledAsync();
+      const serviciosActivos = await Location.hasServicesEnabledAsync();
 
       if (!serviciosActivos) {
         Alert.alert(
-          'GPS desactivado',
-          'Activá la ubicación del dispositivo e intentá nuevamente.'
+          "GPS desactivado",
+          "Activá la ubicación del dispositivo e intentá nuevamente.",
         );
         return;
+      }
+
+      const ultima = await Location.getLastKnownPositionAsync();
+      if (ultima) {
+        setCoordenadas({
+          latitude: ultima.coords.latitude,
+          longitude: ultima.coords.longitude,
+        });
       }
 
       const ubicacion = await Location.getCurrentPositionAsync({
@@ -480,30 +492,62 @@ export default function NuevoReporteScreen() {
 
           setDireccion(
             partes.length > 0
-              ? partes.join(', ')
-              : 'Dirección no disponible; se guardarán las coordenadas GPS.'
+              ? partes.join(", ")
+              : "Dirección no disponible; se guardarán las coordenadas GPS.",
           );
         } else {
           setDireccion(
-            'Dirección no disponible; se guardarán las coordenadas GPS.'
+            "Dirección no disponible; se guardarán las coordenadas GPS.",
           );
         }
       } catch (error) {
-        console.warn('No se pudo identificar la dirección:', error);
+        console.warn("No se pudo identificar la dirección:", error);
         setDireccion(
-          'Dirección no disponible; se guardarán las coordenadas GPS.'
+          "Dirección no disponible; se guardarán las coordenadas GPS.",
         );
       }
 
-      await Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Success
-      );
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      try {
+        const cercanos = await obtenerReportesCercanos(
+          ubicacion.coords.latitude,
+          ubicacion.coords.longitude,
+          50,
+        );
+
+        if (cercanos.length > 0) {
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Warning,
+          );
+
+          const primero = cercanos[0];
+
+          Alert.alert(
+            "¿Es el mismo problema?",
+            `Ya ${cercanos.length === 1 ? "hay un reporte" : `hay ${cercanos.length} reportes`} a menos de 50 m: ${primero.tipo} en ${primero.direccionDescripcion}. Si es el mismo, podés sumarte en vez de crear otro.`,
+            [
+              {
+                text: "Ver ese reporte",
+                onPress: () =>
+                  router.push({
+                    pathname: "/reportes/[id]",
+                    params: { id: primero.id },
+                  }),
+              },
+              { text: "Es otro problema", style: "cancel" },
+            ],
+          );
+        }
+      } catch (e) {
+        console.warn("No se pudieron consultar reportes cercanos:", e);
+      }
     } catch (error) {
-      console.error('Error al obtener la ubicación:', error);
+      console.error("Error al obtener la ubicación:", error);
 
       Alert.alert(
-        'Error',
-        'No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.'
+        "Error",
+        "No se pudo obtener la ubicación. Verificá que el GPS esté activado e intentá nuevamente.",
       );
     } finally {
       setCargandoUbicacion(false);
@@ -515,32 +559,32 @@ export default function NuevoReporteScreen() {
 
     if (recorderState.isRecording) {
       Alert.alert(
-        'Grabación en curso',
-        'Detené la grabación antes de guardar el reporte.'
+        "Grabación en curso",
+        "Detené la grabación antes de guardar el reporte.",
       );
       return;
     }
 
     if (!foto) {
       Alert.alert(
-        'Foto obligatoria',
-        'Agregá una foto principal antes de guardar el reporte.'
+        "Foto obligatoria",
+        "Agregá una foto principal antes de guardar el reporte.",
       );
       return;
     }
 
     if (!tipoProblema || descripcion.trim().length < 10) {
       Alert.alert(
-        'Datos incompletos',
-        'Seleccioná un tipo de problema y escribí una descripción de al menos 10 caracteres.'
+        "Datos incompletos",
+        "Seleccioná un tipo de problema y escribí una descripción de al menos 10 caracteres.",
       );
       return;
     }
 
     if (!coordenadas) {
       Alert.alert(
-        'Ubicación pendiente',
-        'Obtené la ubicación GPS antes de guardar el reporte.'
+        "Ubicación pendiente",
+        "Obtené la ubicación GPS antes de guardar el reporte.",
       );
       return;
     }
@@ -549,24 +593,35 @@ export default function NuevoReporteScreen() {
       setGuardandoReporte(true);
 
       const ahora = new Date().toISOString();
-      const identificador = `reporte-${Date.now()}`;
+      const identificador = `rep-${Date.now()}`;
+
+      const fotoPrincipal = await copiarFotoADocumentos(
+        foto,
+        `${identificador}-principal.jpg`,
+      );
+      const fotoOpcional = fotoSecundaria
+        ? await copiarFotoADocumentos(
+            fotoSecundaria,
+            `${identificador}-secundaria.jpg`,
+          )
+        : null;
 
       const fotoPrincipalLocal = await guardarArchivoLocal(
         foto,
         `${identificador}-principal`,
-        'jpg'
+        "jpg",
       );
 
       const fotoSecundariaLocal = await guardarArchivoLocal(
         fotoSecundaria,
         `${identificador}-secundaria`,
-        'jpg'
+        "jpg",
       );
 
       const audioLocal = await guardarArchivoLocal(
         audioUri,
         `${identificador}-audio`,
-        'm4a'
+        "m4a",
       );
 
       const nuevoReporte: Reporte = {
@@ -578,27 +633,32 @@ export default function NuevoReporteScreen() {
         descripcionAudioUrlRemota: null,
         latitud: coordenadas.latitude,
         longitud: coordenadas.longitude,
-        direccionDescripcion: direccion,
+        direccionDescripcion: direccion || "Dirección pendiente de identificar",
         fotoPrincipalUrlLocal: fotoPrincipalLocal,
         fotoPrincipalUrlRemota: null,
         fotoSecundariaUrlLocal: fotoSecundariaLocal,
         fotoSecundariaUrlRemota: null,
-        estadoActual: 'RECIBIDO',
+        estadoActual: "RECIBIDO",
         cambios: [
           {
             id: `cambio-${Date.now()}`,
             fecha: ahora,
-            estado: 'RECIBIDO',
-            comentario: 'Reporte creado por el vecino.',
+            estado: "RECIBIDO",
+            comentario: "Reporte creado por el vecino.",
           },
         ],
         esPublico: true,
-        creadorId: 'vecino-local',
-        zonaId: 'zona-pendiente',
+        creadorId: "vecino-local",
+        zonaId: "zona-pendiente",
         vecinosSumados: 0,
+        yaMeSumé: false,
+        fotoArregloUrlLocal: null,
+        fotoArregloUrlRemota: null,
+        sincronizado: false,
+        duplicadoDe: null,
       };
 
-      await guardarReporte(nuevoReporte);
+      const resultado = await enviarReporte(nuevoReporte);
 
       eliminarArchivoTemporal(foto);
       eliminarArchivoTemporal(fotoSecundaria);
@@ -606,38 +666,40 @@ export default function NuevoReporteScreen() {
 
       try {
         await Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Success
+          Haptics.NotificationFeedbackType.Success,
         );
       } catch (error) {
-        console.warn('No se pudo ejecutar la vibración:', error);
+        console.warn("No se pudo ejecutar la vibración:", error);
       }
 
       Alert.alert(
-        'Reporte guardado',
-        `Tu reporte se guardó en este dispositivo.\n\nCódigo de seguimiento: ${nuevoReporte.codigoSeguimiento}`,
+        "Reporte guardado",
+        resultado.sincronizado
+          ? `Tu reporte ya está en el sistema municipal.\n\nCódigo de seguimiento: ${resultado.codigoSeguimiento}`
+          : `Tu reporte quedó guardado en el teléfono y se subirá solo cuando haya conexión.\n\nCódigo de seguimiento: ${resultado.codigoSeguimiento}`,
         [
           {
-            text: 'Aceptar',
+            text: "Aceptar",
             onPress: () => {
               setFoto(null);
               setFotoSecundaria(null);
-              setTipoProblema('');
-              setDescripcion('');
+              setTipoProblema("");
+              setDescripcion("");
               setAudioUri(null);
               setCoordenadas(null);
-              setDireccion('');
+              setDireccion("");
               setMostrarUbicacion(false);
               setMostrarFormulario(false);
             },
           },
-        ]
+        ],
       );
     } catch (error) {
-      console.error('Error al guardar el reporte:', error);
+      console.error("Error al guardar el reporte:", error);
 
       Alert.alert(
-        'Error al guardar',
-        'No se pudo guardar el reporte. Tus datos siguen en pantalla; intentá nuevamente.'
+        "Error al guardar",
+        "No se pudo guardar el reporte. Tus datos siguen en pantalla; intentá nuevamente.",
       );
     } finally {
       setGuardandoReporte(false);
@@ -649,24 +711,24 @@ export default function NuevoReporteScreen() {
 
     if (recorderState.isRecording) {
       Alert.alert(
-        'Grabación en curso',
-        'Detené la grabación antes de guardar los cambios.'
+        "Grabación en curso",
+        "Detené la grabación antes de guardar los cambios.",
       );
       return;
     }
 
     if (!foto) {
       Alert.alert(
-        'Foto obligatoria',
-        'El reporte debe conservar una foto principal.'
+        "Foto obligatoria",
+        "El reporte debe conservar una foto principal.",
       );
       return;
     }
 
     if (descripcion.trim().length < 10) {
       Alert.alert(
-        'Descripción incompleta',
-        'Escribí una descripción de al menos 10 caracteres.'
+        "Descripción incompleta",
+        "Escribí una descripción de al menos 10 caracteres.",
       );
       return;
     }
@@ -678,12 +740,12 @@ export default function NuevoReporteScreen() {
       // que haya sido tomado por un operador mientras esta pantalla estaba abierta.
       const reporteActual = await obtenerReportePorId(idParametro);
 
-      if (!reporteActual || reporteActual.estadoActual !== 'RECIBIDO') {
+      if (!reporteActual || reporteActual.estadoActual !== "RECIBIDO") {
         setEdicionPermitida(false);
 
         Alert.alert(
-          'Edición no disponible',
-          'El reporte ya no está en estado Recibido y no puede modificarse.'
+          "Edición no disponible",
+          "El reporte ya no está en estado Recibido y no puede modificarse.",
         );
         return;
       }
@@ -705,7 +767,7 @@ export default function NuevoReporteScreen() {
         : await guardarArchivoLocal(
             foto,
             `${reporteOriginal.id}-principal`,
-            'jpg'
+            "jpg",
           );
 
       const fotoPrincipalRemota = fotoPrincipalSinCambios
@@ -717,7 +779,7 @@ export default function NuevoReporteScreen() {
         : await guardarArchivoLocal(
             fotoSecundaria,
             `${reporteOriginal.id}-secundaria`,
-            'jpg'
+            "jpg",
           );
 
       const fotoSecundariaRemota = fotoSecundariaSinCambios
@@ -729,7 +791,7 @@ export default function NuevoReporteScreen() {
         : await guardarArchivoLocal(
             audioUri,
             `${reporteOriginal.id}-audio`,
-            'm4a'
+            "m4a",
           );
 
       const audioRemoto = audioSinCambios
@@ -755,33 +817,33 @@ export default function NuevoReporteScreen() {
 
       try {
         await Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Success
+          Haptics.NotificationFeedbackType.Success,
         );
       } catch (error) {
-        console.warn('No se pudo ejecutar la vibración:', error);
+        console.warn("No se pudo ejecutar la vibración:", error);
       }
 
       Alert.alert(
-        'Cambios guardados',
-        'El reporte se actualizó correctamente.',
+        "Cambios guardados",
+        "El reporte se actualizó correctamente.",
         [
           {
-            text: 'Aceptar',
+            text: "Aceptar",
             onPress: () => {
               router.replace({
-                pathname: '/(main)/reportes/[id]',
+                pathname: "/(main)/reportes/[id]",
                 params: { id: reporteOriginal.id },
               });
             },
           },
-        ]
+        ],
       );
     } catch (error) {
-      console.error('Error al actualizar el reporte:', error);
+      console.error("Error al actualizar el reporte:", error);
 
       Alert.alert(
-        'Error al guardar',
-        'No se pudieron guardar los cambios. Los datos originales del reporte se conservaron.'
+        "Error al guardar",
+        "No se pudieron guardar los cambios. Los datos originales del reporte se conservaron.",
       );
     } finally {
       setGuardandoReporte(false);
@@ -791,7 +853,7 @@ export default function NuevoReporteScreen() {
   if (cargandoReporte) {
     return (
       <ThemedView style={styles.container}>
-        <Stack.Screen options={{ title: 'Editar reporte' }} />
+        <Stack.Screen options={{ title: "Editar reporte" }} />
         <ActivityIndicator size="large" />
         <ThemedText>Cargando reporte...</ThemedText>
       </ThemedView>
@@ -801,16 +863,14 @@ export default function NuevoReporteScreen() {
   if (esEdicion && (!reporteOriginal || !edicionPermitida)) {
     return (
       <ThemedView style={styles.container}>
-        <Stack.Screen options={{ title: 'Editar reporte' }} />
+        <Stack.Screen options={{ title: "Editar reporte" }} />
 
-        <ThemedText type="title">
-          Edición no disponible
-        </ThemedText>
+        <ThemedText type="title">Edición no disponible</ThemedText>
 
         <ThemedText>
           {reporteOriginal
-            ? 'Este reporte ya no está en estado Recibido. Podés consultar sus datos, pero no modificarlos.'
-            : 'No se encontró el reporte solicitado.'}
+            ? "Este reporte ya no está en estado Recibido. Podés consultar sus datos, pero no modificarlos."
+            : "No se encontró el reporte solicitado."}
         </ThemedText>
 
         <Button title="Volver" onPress={() => router.back()} />
@@ -821,29 +881,18 @@ export default function NuevoReporteScreen() {
   if (mostrarCamara) {
     return (
       <View style={styles.cameraContainer}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing="back"
-        />
+        <CameraView ref={cameraRef} style={styles.camera} facing="back" />
 
         <View style={styles.cameraControls}>
-          <TouchableOpacity
-            style={styles.captureButton}
-            onPress={tomarFoto}
-          >
-            <ThemedText style={styles.captureButtonText}>
-              Tomar foto
-            </ThemedText>
+          <TouchableOpacity style={styles.captureButton} onPress={tomarFoto}>
+            <ThemedText style={styles.captureButtonText}>Tomar foto</ThemedText>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.cancelButton}
             onPress={cancelarCamara}
           >
-            <ThemedText style={styles.cancelButtonText}>
-              Cancelar
-            </ThemedText>
+            <ThemedText style={styles.cancelButtonText}>Cancelar</ThemedText>
           </TouchableOpacity>
         </View>
       </View>
@@ -857,19 +906,15 @@ export default function NuevoReporteScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <ThemedText type="title">
-            Ubicación del problema
-          </ThemedText>
+          <ThemedText type="title">Ubicación del problema</ThemedText>
 
           <ThemedText style={styles.description}>
-            Indicá dónde se encuentra el problema para que el municipio
-            pueda localizarlo.
+            Indicá dónde se encuentra el problema para que el municipio pueda
+            localizarlo.
           </ThemedText>
 
           <View style={styles.previewContainer}>
-            <ThemedText type="subtitle">
-              Ubicación del dispositivo
-            </ThemedText>
+            <ThemedText type="subtitle">Ubicación del dispositivo</ThemedText>
 
             <ThemedText>
               Presioná el botón para obtener las coordenadas GPS actuales.
@@ -878,10 +923,10 @@ export default function NuevoReporteScreen() {
             <Button
               title={
                 cargandoUbicacion
-                  ? 'Obteniendo ubicación...'
+                  ? "Obteniendo ubicación..."
                   : coordenadas
-                    ? 'Actualizar ubicación'
-                    : 'Obtener mi ubicación GPS'
+                    ? "Actualizar ubicación"
+                    : "Obtener mi ubicación GPS"
               }
               disabled={cargandoUbicacion || guardandoReporte}
               onPress={obtenerUbicacion}
@@ -901,9 +946,7 @@ export default function NuevoReporteScreen() {
                   Longitud: {coordenadas.longitude.toFixed(6)}
                 </ThemedText>
 
-                <ThemedText type="subtitle">
-                  Dirección del problema
-                </ThemedText>
+                <ThemedText type="subtitle">Dirección del problema</ThemedText>
 
                 <TextInput
                   style={styles.descriptionInput}
@@ -929,9 +972,7 @@ export default function NuevoReporteScreen() {
 
           <Button
             title={
-              guardandoReporte
-                ? 'Guardando reporte...'
-                : 'Guardar reporte'
+              guardandoReporte ? "Guardando reporte..." : "Guardar reporte"
             }
             disabled={!coordenadas || guardandoReporte}
             onPress={guardarNuevoReporte}
@@ -945,7 +986,7 @@ export default function NuevoReporteScreen() {
     return (
       <ThemedView style={styles.container}>
         <Stack.Screen
-          options={{ title: esEdicion ? 'Editar reporte' : 'Nuevo reporte' }}
+          options={{ title: esEdicion ? "Editar reporte" : "Nuevo reporte" }}
         />
 
         <ScrollView
@@ -954,20 +995,18 @@ export default function NuevoReporteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <ThemedText type="title">
-            {esEdicion ? 'Editar descripción' : 'Datos del reporte'}
+            {esEdicion ? "Editar descripción" : "Datos del reporte"}
           </ThemedText>
 
           <ThemedText style={styles.description}>
             {esEdicion
-              ? 'Podés corregir la descripción del problema.'
-              : 'Contanos qué problema encontraste para que el municipio pueda identificarlo.'}
+              ? "Podés corregir la descripción del problema."
+              : "Contanos qué problema encontraste para que el municipio pueda identificarlo."}
           </ThemedText>
 
           {!esEdicion && (
             <>
-              <ThemedText type="subtitle">
-                Tipo de problema *
-              </ThemedText>
+              <ThemedText type="subtitle">Tipo de problema *</ThemedText>
 
               <View style={styles.tiposContainer}>
                 {tiposProblema.map((tipo) => (
@@ -993,9 +1032,7 @@ export default function NuevoReporteScreen() {
             </>
           )}
 
-          <ThemedText type="subtitle">
-            Descripción *
-          </ThemedText>
+          <ThemedText type="subtitle">Descripción *</ThemedText>
 
           <TextInput
             style={styles.descriptionInput}
@@ -1041,11 +1078,7 @@ export default function NuevoReporteScreen() {
               </>
             ) : (
               <Button
-                title={
-                  audioUri
-                    ? 'Grabar audio nuevamente'
-                    : 'Grabar audio'
-                }
+                title={audioUri ? "Grabar audio nuevamente" : "Grabar audio"}
                 disabled={procesandoAudio || guardandoReporte}
                 onPress={iniciarGrabacion}
               />
@@ -1065,7 +1098,7 @@ export default function NuevoReporteScreen() {
           </ThemedText>
 
           <Button
-            title={esEdicion ? 'Volver a las fotos' : 'Volver a las fotos'}
+            title={esEdicion ? "Volver a las fotos" : "Volver a las fotos"}
             onPress={() => setMostrarFormulario(false)}
           />
 
@@ -1073,9 +1106,9 @@ export default function NuevoReporteScreen() {
             title={
               esEdicion
                 ? guardandoReporte
-                  ? 'Guardando cambios...'
-                  : 'Guardar cambios'
-                : 'Continuar a la ubicación'
+                  ? "Guardando cambios..."
+                  : "Guardar cambios"
+                : "Continuar a la ubicación"
             }
             disabled={
               !esEdicion &&
@@ -1087,8 +1120,8 @@ export default function NuevoReporteScreen() {
             onPress={() => {
               if (descripcion.trim().length < 10) {
                 Alert.alert(
-                  'Descripción incompleta',
-                  'Describí el problema con al menos 10 caracteres.'
+                  "Descripción incompleta",
+                  "Describí el problema con al menos 10 caracteres.",
                 );
                 return;
               }
@@ -1108,7 +1141,7 @@ export default function NuevoReporteScreen() {
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen
-        options={{ title: esEdicion ? 'Editar reporte' : 'Nuevo reporte' }}
+        options={{ title: esEdicion ? "Editar reporte" : "Nuevo reporte" }}
       />
 
       <ScrollView
@@ -1116,19 +1149,17 @@ export default function NuevoReporteScreen() {
         showsVerticalScrollIndicator={false}
       >
         <ThemedText type="title">
-          {esEdicion ? 'Editar reporte' : 'Nuevo reporte'}
+          {esEdicion ? "Editar reporte" : "Nuevo reporte"}
         </ThemedText>
 
         <ThemedText style={styles.description}>
           {esEdicion
-            ? 'Podés reemplazar las fotos adjuntas. Los datos de ubicación y tipo de problema se mantienen.'
-            : 'Para crear un reporte necesitás adjuntar una foto del problema.'}
+            ? "Podés reemplazar las fotos adjuntas. Los datos de ubicación y tipo de problema se mantienen."
+            : "Para crear un reporte necesitás adjuntar una foto del problema."}
         </ThemedText>
 
         <View style={styles.previewContainer}>
-          <ThemedText type="subtitle">
-            Foto principal (obligatoria)
-          </ThemedText>
+          <ThemedText type="subtitle">Foto principal (obligatoria)</ThemedText>
 
           {foto ? (
             <>
@@ -1143,21 +1174,19 @@ export default function NuevoReporteScreen() {
               </ThemedText>
             </>
           ) : (
-            <ThemedText>
-              Todavía no agregaste la foto principal.
-            </ThemedText>
+            <ThemedText>Todavía no agregaste la foto principal.</ThemedText>
           )}
 
           <Button
-            title={foto ? 'Tomar otra foto principal' : 'Tomar foto'}
+            title={foto ? "Tomar otra foto principal" : "Tomar foto"}
             onPress={() => abrirCamara(false)}
           />
 
           <Button
             title={
               foto
-                ? 'Elegir otra imagen principal'
-                : 'Elegir imagen de la galería'
+                ? "Elegir otra imagen principal"
+                : "Elegir imagen de la galería"
             }
             onPress={() => elegirDeGaleria(false)}
           />
@@ -1165,9 +1194,7 @@ export default function NuevoReporteScreen() {
 
         {foto && (
           <View style={styles.previewContainer}>
-            <ThemedText type="subtitle">
-              Segunda foto (opcional)
-            </ThemedText>
+            <ThemedText type="subtitle">Segunda foto (opcional)</ThemedText>
 
             {fotoSecundaria ? (
               <>
@@ -1198,8 +1225,8 @@ export default function NuevoReporteScreen() {
             <Button
               title={
                 fotoSecundaria
-                  ? 'Tomar otra segunda foto'
-                  : 'Agregar segunda foto (opcional)'
+                  ? "Tomar otra segunda foto"
+                  : "Agregar segunda foto (opcional)"
               }
               onPress={() => abrirCamara(true)}
             />
@@ -1207,8 +1234,8 @@ export default function NuevoReporteScreen() {
             <Button
               title={
                 fotoSecundaria
-                  ? 'Elegir otra segunda imagen'
-                  : 'Elegir segunda imagen de la galería'
+                  ? "Elegir otra segunda imagen"
+                  : "Elegir segunda imagen de la galería"
               }
               onPress={() => elegirDeGaleria(true)}
             />
@@ -1242,61 +1269,61 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: "#000000",
   },
   camera: {
     flex: 1,
   },
   cameraControls: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 40,
     left: 0,
     right: 0,
-    alignItems: 'center',
+    alignItems: "center",
     gap: 16,
   },
   captureButton: {
-    backgroundColor: '#003785',
+    backgroundColor: "#003785",
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 30,
   },
   captureButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   cancelButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     paddingVertical: 12,
     paddingHorizontal: 28,
     borderRadius: 25,
   },
   cancelButtonText: {
-    color: '#003785',
-    fontWeight: 'bold',
+    color: "#003785",
+    fontWeight: "bold",
   },
   previewContainer: {
     marginTop: 8,
     gap: 12,
   },
   preview: {
-    width: '100%',
+    width: "100%",
     height: 250,
     borderRadius: 12,
   },
   successText: {
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   recordingText: {
-    color: '#D32F2F',
-    fontWeight: 'bold',
+    color: "#D32F2F",
+    fontWeight: "bold",
   },
   audioContainer: {
     marginTop: 8,
     gap: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#777777',
+    borderColor: "#777777",
     borderRadius: 10,
   },
   coordinatesContainer: {
@@ -1304,47 +1331,47 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#777777',
+    borderColor: "#777777",
     borderRadius: 10,
   },
   continueContainer: {
     marginTop: 8,
   },
   tiposContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   tipoButton: {
     borderWidth: 1,
-    borderColor: '#777777',
+    borderColor: "#777777",
     borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
   tipoButtonSelected: {
-    backgroundColor: '#003785',
-    borderColor: '#003785',
+    backgroundColor: "#003785",
+    borderColor: "#003785",
   },
   tipoText: {
-    color: '#333333',
+    color: "#333333",
   },
   tipoTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   descriptionInput: {
     minHeight: 140,
     borderWidth: 1,
-    borderColor: '#777777',
+    borderColor: "#777777",
     borderRadius: 10,
     padding: 12,
     fontSize: 16,
-    color: '#222222',
+    color: "#222222",
   },
   counterText: {
     fontSize: 12,
-    textAlign: 'right',
+    textAlign: "right",
   },
   helpText: {
     fontSize: 13,

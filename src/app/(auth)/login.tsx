@@ -11,14 +11,13 @@ import {
   View,
 } from "react-native";
 
-import { loginMock, type UserRole } from "@/services/auth";
+import { iniciarSesion } from "@/services/auth";
 
 export default function LoginScreen() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("vecino@example.com");
-  const [password, setPassword] = useState("vecino123");
-  const [role, setRole] = useState<UserRole>("vecino");
+  const [email, setEmail] = useState("norma@mail.com");
+  const [password, setPassword] = useState("demo1234");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
@@ -29,7 +28,7 @@ export default function LoginScreen() {
 
     try {
       setLoading(true);
-      const session = await loginMock(email.trim(), password.trim(), role);
+      const session = await iniciarSesion(email.trim(), password.trim());
 
       if (!session.token) {
         throw new Error("No se pudo iniciar sesión.");
@@ -38,7 +37,7 @@ export default function LoginScreen() {
       if (session.role === "operador") {
         router.replace("/(operador)/bandeja");
       } else {
-        router.replace("/(main)");
+        router.replace("/(main)/reportes");
       }
     } catch (error: any) {
       Alert.alert(
@@ -76,31 +75,6 @@ export default function LoginScreen() {
           placeholder="••••••••"
         />
 
-        <ThemedText style={styles.label}>Ingresar como</ThemedText>
-        <View style={styles.roleRow}>
-          <TouchableOpacity
-            style={[
-              styles.roleButton,
-              role === "vecino" && styles.roleButtonActive,
-            ]}
-            onPress={() => setRole("vecino")}
-            disabled={loading}
-          >
-            <ThemedText style={styles.roleLabel}>Vecino</ThemedText>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.roleButton,
-              role === "operador" && styles.roleButtonActive,
-            ]}
-            onPress={() => setRole("operador")}
-            disabled={loading}
-          >
-            <ThemedText style={styles.roleLabel}>Operador</ThemedText>
-          </TouchableOpacity>
-        </View>
-
         <TouchableOpacity
           style={styles.submitButton}
           onPress={handleSubmit}
@@ -113,13 +87,22 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
 
+        <TouchableOpacity
+          onPress={() => router.push("/register")}
+          disabled={loading}
+        >
+          <ThemedText type="link" style={styles.registro}>
+            ¿No tenés cuenta? Registrate
+          </ThemedText>
+        </TouchableOpacity>
+
         <View style={styles.helperTextContainer}>
           <ThemedText style={styles.helperText}>Usuarios de prueba:</ThemedText>
           <ThemedText style={styles.helperText}>
-            vecino@example.com / vecino123
+            norma@mail.com / demo1234 (vecino)
           </ThemedText>
           <ThemedText style={styles.helperText}>
-            operador@example.com / operador123
+            operador.norte@demo.ar / demo1234 (operador)
           </ThemedText>
         </View>
       </View>
@@ -141,9 +124,7 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: "rgba(255,255,255,0.9)",
   },
-  title: {textAlign: "center",
-    marginBottom: 16,
-  },
+  title: { textAlign: "center", marginBottom: 16 },
   label: {
     marginTop: 8,
     marginBottom: 4,
@@ -188,6 +169,10 @@ const styles = StyleSheet.create({
   submitLabel: {
     color: "#FFFFFF",
   },
+  registro: {
+    marginTop: 16,
+    textAlign: "center",
+  },
   helperTextContainer: {
     marginTop: 16,
     gap: 2,
@@ -196,4 +181,3 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
-    
