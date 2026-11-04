@@ -1,70 +1,90 @@
-import * as SecureStore from "expo-secure-store";
-import { Platform } from "react-native";
+import {
+  apiUno,
+  borrarItemSeguro,
+  escribirItemSeguro,
+  leerItemSeguro,
+  ROLE_KEY,
+  TOKEN_KEY,
+  USER_KEY,
+} from "@/services/api";
+import type { SesionApi, UsuarioApi } from "@/tipos/api";
 
-export type UserRole = "vecino" | "operador";
+export type UserRole = UsuarioApi["rol"];
 
-const TOKEN_KEY = "sessionToken";
-const ROLE_KEY = "sessionRole";
-
-export async function loginMock(
-  email: string,
-  password: string,
-  role: UserRole,
-) {
-  // Credenciales hardcodeadas de ejemplo
-  const validCredentials = {
-    vecino: {
-      email: "vecino@example.com",
-      password: "vecino123",
-    },
-    operador: {
-      email: "operador@example.com",
-      password: "operador123",
-    },
-  } as const;
-
-  const expected = validCredentials[role];
-
-  if (email !== expected.email || password !== expected.password) {
-    throw new Error("Credenciales inválidas");
-  }
-
-  // Simulamos un token JWT cualquiera
-  const fakeToken = `fake-token-${role}-${Date.now()}`;
-
-  // En Web, SecureStore no está soportado: solo devolvemos el token sin persistir.
-  if (Platform.OS !== "web") {
-    await SecureStore.setItemAsync(TOKEN_KEY, fakeToken);
-    await SecureStore.setItemAsync(ROLE_KEY, role);
-  }
-
-  return {
-    token: fakeToken,
-    role,
-  } as const;
+export interface Sesion {
+  token: string;
+  role: UserRole;
+  usuario: UsuarioApi;
 }
 
-export async function getStoredSession() {
-  if (Platform.OS === "web") {
-    // En Web, por ahora no persistimos sesión; siempre volvemos null.
-    return null;
-  }
+async function guardarSesion(sesion: SesionApi): Promise<Sesion> {
+  await escribirItemSeguro(TOKEN_KEY, sesion.token);
+  await escribirItemSeguro(ROLE_KEY, sesion.usuario.rol);
+  await escribirItemSeguro(USER_KEY, JSON.stringify(sesion.usuario));
 
-  const token = await SecureStore.getItemAsync(TOKEN_KEY);
-  const role = (await SecureStore.getItemAsync(ROLE_KEY)) as UserRole | null;
+  return {
+    token: sesion.token,
+    role: sesion.usuario.rol,
+    usuario: sesion.usuario,
+  };
+}
+
+/** Ingresa con email y contraseña contra POST /auth/ingreso. */
+export async function iniciarSesion(
+  email: string,
+  contrasena: string,
+): Promise<Sesion> {
+  const sesion = await apiUno<SesionApi>("/auth/ingreso", {
+    method: "POST",
+    body: { email, contrasena },
+    conSesion: false,
+  });
+
+  return guardarSesion(sesion);
+}
+
+/** Crea una cuenta de vecino contra POST /auth/registro. */
+export async function registrarse(
+  nombre: string,
+  email: string,
+  contrasena: string,
+): Promise<Sesion> {
+  const sesion = await apiUno<SesionApi>("/auth/registro", {
+    method: "POST",
+    body: { nombre, email, contrasena },
+    conSesion: false,
+  });
+
+  return guardarSesion(sesion);
+}
+
+export async function getStoredSession(): Promise<{
+  token: string;
+  role: UserRole;
+  usuario: UsuarioApi | null;
+} | null> {
+  const token = await leerItemSeguro(TOKEN_KEY);
+  const role = (await leerItemSeguro(ROLE_KEY)) as UserRole | null;
 
   if (!token || !role) {
     return null;
   }
 
-  return { token, role } as const;
+  const crudo = await leerItemSeguro(USER_KEY);
+  let usuario: UsuarioApi | null = null;
+  if (crudo) {
+    try {
+      usuario = JSON.parse(crudo) as UsuarioApi;
+    } catch {
+      usuario = null;
+    }
+  }
+
+  return { token, role, usuario };
 }
 
 export async function logout() {
-  if (Platform.OS === "web") {
-    return;
-  }
-
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-  await SecureStore.deleteItemAsync(ROLE_KEY);
+  await borrarItemSeguro(TOKEN_KEY);
+  await borrarItemSeguro(ROLE_KEY);
+  await borrarItemSeguro(USER_KEY);
 }

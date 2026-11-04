@@ -83,31 +83,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </Link>
           </ThemedView>
-
-          {/* Enlaces temporales para desarrollo */}
-          <ThemedView style={styles.debugLinks}>
-            <ThemedText type="small">
-              Pantallas de prueba (solo para desarrollo):
-            </ThemedText>
-            <Link href="/(main)" style={styles.link}>
-              <ThemedText type="link">Inicio vecino</ThemedText>
-            </Link>
-            <Link href="/(main)/reportes/nuevo" style={styles.link}>
-              <ThemedText type="link">Nuevo reporte</ThemedText>
-            </Link>
-            <Link href="/(main)/reportes" style={styles.link}>
-              <ThemedText type="link">Mis reportes</ThemedText>
-            </Link>
-            <Link href="/(main)/mapa" style={styles.link}>
-              <ThemedText type="link">Mapa de la ciudad</ThemedText>
-            </Link>
-            <Link href="/(operador)/bandeja" style={styles.link}>
-              <ThemedText type="link">Bandeja del operador</ThemedText>
-            </Link>
-            <Link href="/(operador)/cuadrillas" style={styles.link}>
-              <ThemedText type="link">Zonas y cuadrillas</ThemedText>
-            </Link>
-          </ThemedView>
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -185,13 +160,5 @@ const styles = StyleSheet.create({
   secondaryLabel: {
     textAlign: "center",
     color: "#FFFFFF",
-  },
-  debugLinks: {
-    width: "100%",
-    marginTop: 24,
-    gap: 4,
-  },
-  link: {
-    marginTop: 4,
   },
 });
