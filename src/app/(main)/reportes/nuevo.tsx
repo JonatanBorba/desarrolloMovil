@@ -10,7 +10,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -22,6 +22,7 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
+  useColorScheme,
   View,
 } from "react-native";
 
@@ -31,6 +32,8 @@ import {
   guardarReporte,
   obtenerReportePorId,
 } from "@/services/almacenamientoReportes";
+
+import { notificarReporteEnviado } from "@/services/notificaciones";
 import {
   enviarReporte,
   obtenerReportesCercanos,
@@ -145,6 +148,8 @@ export default function NuevoReporteScreen() {
     : parametros.id;
 
   const esEdicion = Boolean(idParametro);
+
+  const colorTexto = useColorScheme() === "dark" ? "#FFFFFF" : "#222222";
 
   const [permission, requestPermission] = useCameraPermissions();
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -672,6 +677,12 @@ export default function NuevoReporteScreen() {
         console.warn("No se pudo ejecutar la vibración:", error);
       }
 
+      try {
+        await notificarReporteEnviado(tipoProblema);
+      } catch (error) {
+        console.warn("No se pudo mostrar la notificación:", error);
+      }
+
       Alert.alert(
         "Reporte guardado",
         resultado.sincronizado
@@ -949,7 +960,7 @@ export default function NuevoReporteScreen() {
                 <ThemedText type="subtitle">Dirección del problema</ThemedText>
 
                 <TextInput
-                  style={styles.descriptionInput}
+                  style= {[styles.descriptionInput, { color: colorTexto }]}
                   placeholder="Ej.: calle Urquiza 450, Gualeguaychú"
                   placeholderTextColor="#777777"
                   value={direccion}
@@ -1035,7 +1046,7 @@ export default function NuevoReporteScreen() {
           <ThemedText type="subtitle">Descripción *</ThemedText>
 
           <TextInput
-            style={styles.descriptionInput}
+            style= {[styles.descriptionInput, { color: colorTexto }]}
             placeholder="Describí el problema y dónde se encuentra..."
             placeholderTextColor="#777777"
             value={descripcion}
@@ -1353,9 +1364,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#003785",
     borderColor: "#003785",
   },
-  tipoText: {
-    color: "#333333",
-  },
+  tipoText: {},
+
   tipoTextSelected: {
     color: "#FFFFFF",
     fontWeight: "bold",
