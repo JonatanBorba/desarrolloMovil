@@ -3,6 +3,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,18 +14,10 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
-  guardarReporte,
-  obtenerReportePorId,
-} from '@/services/almacenamientoReportes';
+  actualizarEstadoReporteOperador,
+  obtenerReporteOperadorPorId,
+} from '@/services/reportes';
 import type { EstadoReporte, Reporte } from '@/tipos/reporte';
-
-const ESTADOS: EstadoReporte[] = [
-  'RECIBIDO',
-  'EN_REVISION',
-  'ASIGNADO_CUADRILLA',
-  'RESUELTO',
-  'RECHAZADO',
-];
 
 function nombreEstado(estado: EstadoReporte): string {
   switch (estado) {
@@ -38,6 +31,20 @@ function nombreEstado(estado: EstadoReporte): string {
       return 'Resuelto';
     case 'RECHAZADO':
       return 'Rechazado';
+  }
+}
+
+function estadosDisponibles(estado: EstadoReporte): EstadoReporte[] {
+  switch (estado) {
+    case 'RECIBIDO':
+      return ['EN_REVISION', 'RECHAZADO'];
+    case 'EN_REVISION':
+      return ['RECHAZADO'];
+    case 'ASIGNADO_CUADRILLA':
+      return ['RESUELTO', 'EN_REVISION', 'RECHAZADO'];
+    case 'RESUELTO':
+    case 'RECHAZADO':
+      return [];
   }
 }
 
@@ -63,7 +70,7 @@ export default function DetalleOperadorReporteScreen() {
           return;
         }
 
-        const resultado = await obtenerReportePorId(id);
+        const resultado = await obtenerReporteOperadorPorId(id);
 
         if (activo) {
           setReporte(resultado);
@@ -72,7 +79,11 @@ export default function DetalleOperadorReporteScreen() {
         console.error('Error al cargar el reporte del operador:', error);
 
         if (activo) {
-          setMensaje('No se pudo cargar el reporte.');
+          setMensaje(
+            error instanceof Error
+              ? error.message
+              : 'No se pudo cargar el reporte.',
+          );
         }
       } finally {
         if (activo) {
@@ -93,31 +104,35 @@ export default function DetalleOperadorReporteScreen() {
       return;
     }
 
+    if (nuevoEstado === 'RECHAZADO' && !comentario.trim()) {
+      Alert.alert(
+        'Comentario obligatorio',
+        'Para rechazar un reporte tenés que indicar el motivo.',
+      );
+      return;
+    }
+
     setGuardando(true);
     setMensaje('');
 
     try {
-      const nuevoCambio = {
-        id: `cambio-${Date.now()}`,
-        fecha: new Date().toISOString(),
-        estado: nuevoEstado,
-        comentario: comentario.trim() || null,
-      };
+      const actualizado = await actualizarEstadoReporteOperador(
+        reporte.id,
+        nuevoEstado,
+        comentario,
+      );
 
-      const reporteActualizado: Reporte = {
-        ...reporte,
-        estadoActual: nuevoEstado,
-        cambios: [...reporte.cambios, nuevoCambio],
-      };
-
-      await guardarReporte(reporteActualizado);
-
-      setReporte(reporteActualizado);
+      setReporte(actualizado);
       setComentario('');
-      setMensaje('Estado actualizado y guardado correctamente.');
+      setMensaje('Estado actualizado correctamente en el servidor.');
     } catch (error) {
       console.error('Error al actualizar el estado:', error);
-      setMensaje('No se pudo guardar el cambio. Volvé a intentarlo.');
+
+      setMensaje(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo guardar el cambio. Volvé a intentarlo.',
+      );
     } finally {
       setGuardando(false);
     }
@@ -135,13 +150,15 @@ export default function DetalleOperadorReporteScreen() {
   if (!reporte) {
     return (
       <ThemedView style={styles.contenedor}>
-        <ThemedText type="title">Reporte no encontrado</ThemedText>
+        <ThemedText type="title">No se pudo cargar el reporte</ThemedText>
         <ThemedText>
-          No encontramos un reporte guardado con ese identificador.
+          {mensaje || 'No encontramos el reporte solicitado.'}
         </ThemedText>
       </ThemedView>
     );
   }
+
+  const disponibles = estadosDisponibles(reporte.estadoActual);
 
   return (
     <ThemedView style={styles.contenedor}>
@@ -150,78 +167,82 @@ export default function DetalleOperadorReporteScreen() {
 
         <View style={styles.tarjeta}>
           <ThemedText type="subtitle">{reporte.tipo}</ThemedText>
+
           <ThemedText>
             Código de seguimiento: {reporte.codigoSeguimiento}
           </ThemedText>
-          <ThemedText>
-            ID del reporte: {reporte.id}
-          </ThemedText>
+
+          <ThemedText>ID del reporte: {reporte.id}</ThemedText>
+
           <ThemedText>
             Descripción: {reporte.descripcionTexto || 'Sin descripción'}
           </ThemedText>
+
           <ThemedText>
             Dirección: {reporte.direccionDescripcion}
           </ThemedText>
+
           <ThemedText>
             Estado actual: {nombreEstado(reporte.estadoActual)}
           </ThemedText>
         </View>
 
         <ThemedText type="subtitle">Cambiar estado</ThemedText>
-        <ThemedText>
-          Seleccioná el nuevo estado del reclamo.
-        </ThemedText>
 
-        {ESTADOS.map((estado) => {
-          const seleccionado = reporte.estadoActual === estado;
+        {disponibles.length > 0 ? (
+          <>
+            <ThemedText>
+              Seleccioná una de las transiciones permitidas.
+            </ThemedText>
 
-          return (
-            <Pressable
-              key={estado}
-              accessibilityRole="button"
-              accessibilityState={{
-                selected: seleccionado,
-                disabled: guardando || seleccionado,
-              }}
-              disabled={guardando || seleccionado}
-              onPress={() => cambiarEstado(estado)}
-              style={[
-                styles.botonEstado,
-                seleccionado && styles.estadoActual,
-                (guardando || seleccionado) && styles.botonDeshabilitado,
-              ]}
-            >
-              <ThemedText style={styles.textoEstado}>
-                {seleccionado ? '✓ Estado actual: ' : ''}
-                {nombreEstado(estado)}
-              </ThemedText>
-            </Pressable>
-          );
-        })}
+            {disponibles.map((estado) => (
+              <Pressable
+                key={estado}
+                accessibilityRole="button"
+                disabled={guardando}
+                onPress={() => cambiarEstado(estado)}
+                style={[
+                  styles.botonEstado,
+                  guardando && styles.botonDeshabilitado,
+                ]}
+              >
+                <ThemedText style={styles.textoEstado}>
+                  {nombreEstado(estado)}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </>
+        ) : (
+          <ThemedText>
+            Este reporte no tiene más cambios de estado disponibles.
+          </ThemedText>
+        )}
 
-        <ThemedText type="subtitle">
-          Comentario del cambio (opcional)
-        </ThemedText>
+        {disponibles.includes('RECHAZADO') ? (
+          <>
+            <ThemedText type="subtitle">
+              Motivo o comentario
+            </ThemedText>
 
-        <TextInput
-          value={comentario}
-          onChangeText={setComentario}
-          placeholder="Escribí un comentario para el historial"
-          multiline
-          editable={!guardando}
-          style={styles.campoComentario}
-        />
+            <TextInput
+              value={comentario}
+              onChangeText={setComentario}
+              placeholder="Escribí el motivo del rechazo o un comentario"
+              multiline
+              editable={!guardando}
+              style={styles.campoComentario}
+            />
+          </>
+        ) : null}
 
         {guardando ? (
           <View style={styles.progreso}>
             <ActivityIndicator />
-            <ThemedText>Guardando cambio...</ThemedText>
+            <ThemedText>Guardando cambio en el servidor...</ThemedText>
           </View>
         ) : null}
 
-        {mensaje ? (
-          <ThemedText>{mensaje}</ThemedText>
-        ) : null}
+        {mensaje ? <ThemedText>{mensaje}</ThemedText> : null}
 
         <ThemedText type="subtitle">Historial de estados</ThemedText>
 
@@ -231,9 +252,11 @@ export default function DetalleOperadorReporteScreen() {
               <ThemedText type="subtitle">
                 {nombreEstado(cambio.estado)}
               </ThemedText>
+
               <ThemedText>
                 {new Date(cambio.fecha).toLocaleString('es-AR')}
               </ThemedText>
+
               {cambio.comentario ? (
                 <ThemedText>{cambio.comentario}</ThemedText>
               ) : null}
@@ -271,11 +294,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 14,
   },
-  estadoActual: {
-    backgroundColor: '#246B45',
-  },
   botonDeshabilitado: {
-    opacity: 0.8,
+    opacity: 0.5,
   },
   textoEstado: {
     fontWeight: '600',

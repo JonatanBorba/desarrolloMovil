@@ -11,7 +11,7 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { obtenerReportes } from '@/services/almacenamientoReportes';
+import { obtenerBandejaOperador } from '@/services/reportes';
 import type { EstadoReporte, Reporte } from '@/tipos/reporte';
 
 const ESTADOS: Array<{ etiqueta: string; valor: EstadoReporte | 'TODOS' }> = [
@@ -19,8 +19,6 @@ const ESTADOS: Array<{ etiqueta: string; valor: EstadoReporte | 'TODOS' }> = [
   { etiqueta: 'Recibido', valor: 'RECIBIDO' },
   { etiqueta: 'En revisión', valor: 'EN_REVISION' },
   { etiqueta: 'Asignado', valor: 'ASIGNADO_CUADRILLA' },
-  { etiqueta: 'Resuelto', valor: 'RESUELTO' },
-  { etiqueta: 'Rechazado', valor: 'RECHAZADO' },
 ];
 
 function nombreEstado(estado: EstadoReporte): string {
@@ -51,9 +49,10 @@ export default function BandejaOperadorScreen() {
     setError(false);
 
     try {
-      setReportes(await obtenerReportes());
+      const resultado = await obtenerBandejaOperador();
+      setReportes(resultado);
     } catch (e) {
-      console.error('Error al cargar la bandeja:', e);
+      console.error('Error al cargar la bandeja del operador:', e);
       setError(true);
     } finally {
       setCargando(false);
@@ -85,7 +84,7 @@ export default function BandejaOperadorScreen() {
       <ThemedText type="title">Bandeja de reportes</ThemedText>
 
       <ThemedText>
-        Reportes guardados en este dispositivo: {reportes.length}
+        Reportes recibidos del servidor: {reportes.length}
       </ThemedText>
 
       <Pressable
@@ -140,7 +139,7 @@ export default function BandejaOperadorScreen() {
       ) : error ? (
         <View style={styles.centrado}>
           <ThemedText>
-            No se pudieron cargar los reportes guardados.
+            No se pudo conectar con el servidor para cargar la bandeja.
           </ThemedText>
 
           <Pressable onPress={cargarReportes} style={styles.boton}>
