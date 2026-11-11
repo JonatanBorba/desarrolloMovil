@@ -1,3 +1,10 @@
+
+import {
+  eliminarBorrador,
+  guardarBorrador,
+  obtenerBorrador,
+} from "@/services/borradores";
+
 import {
   AudioModule,
   RecordingPresets,
@@ -32,6 +39,7 @@ import {
   guardarReporte,
   obtenerReportePorId,
 } from "@/services/almacenamientoReportes";
+import { WebView } from "react-native-webview";
 
 import { notificarReporteEnviado } from "@/services/notificaciones";
 import {
@@ -41,53 +49,11 @@ import {
 } from "@/services/reportes";
 import type { Reporte } from "@/tipos/reporte";
 
-async function copiarFotoADocumentos(
-  uri: string,
-  nombre: string,
-): Promise<string> {
-  const carpeta = new Directory(Paths.document, "reportes");
-  if (!carpeta.exists) {
-    carpeta.create();
-  }
-
-  const temporal = new File(uri);
-  const definitiva = new File(carpeta, nombre);
-  temporal.copy(definitiva);
-  return definitiva.uri;
-}
 
 function obtenerDirectorioTemporal() {
   return new Directory(Paths.cache, "reportes-temporales");
 }
 
-async function guardarArchivoTemporal(
-  uri: string,
-  nombreBase: string,
-  extensionPredeterminada: string,
-): Promise<string> {
-  const directorio = obtenerDirectorioTemporal();
-
-  if (!directorio.exists) {
-    directorio.create({
-      intermediates: true,
-      idempotent: true,
-    });
-  }
-
-  const uriSinParametros = uri.split("?")[0].split("#")[0];
-  const extension =
-    uriSinParametros.match(/\.([a-zA-Z0-9]+)$/)?.[1] ?? extensionPredeterminada;
-
-  const archivoOriginal = new File(uri);
-  const archivoTemporal = new File(
-    directorio,
-    `${nombreBase}-${Date.now()}.${extension}`,
-  );
-
-  archivoOriginal.copy(archivoTemporal);
-
-  return archivoTemporal.uri;
-}
 
 function eliminarArchivoTemporal(uri: string | null) {
   if (!uri) return;
@@ -141,6 +107,104 @@ async function guardarArchivoLocal(
   return archivoDestino.uri;
 }
 
+const HTML_MAPA_UBICACION = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <style>
+    html, body, #mapa {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="mapa"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    var limitesCiudad = L.latLngBounds(
+  [-33.055, -58.565],
+  [-32.975, -58.475]
+);
+
+var mapa = L.map("mapa", {
+  maxBounds: limitesCiudad,
+  maxBoundsViscosity: 1.0
+}).setView([-33.0094, -58.518], 15);
+
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(mapa);
+
+    var marcador = null;
+
+    function actualizarMarcador(lat, lon, centrar) {
+      var punto = [lat, lon];
+
+      if (!marcador) {
+        marcador = L.marker(punto, { draggable: true }).addTo(mapa);
+
+        marcador.on("dragend", function(evento) {
+          var posicion = evento.target.getLatLng();
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            latitude: posicion.lat,
+            longitude: posicion.lng
+          }));
+        });
+      } else {
+        marcador.setLatLng(punto);
+      }
+
+      if (centrar) {
+        mapa.setView(punto, 17);
+      }
+    }
+
+    window.actualizarMarcador = actualizarMarcador;
+
+    mapa.on("click", function(evento) {
+      var lat = evento.latlng.lat;
+      var lon = evento.latlng.lng;
+
+      actualizarMarcador(lat, lon, false);
+
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        latitude: lat,
+        longitude: lon
+      }));
+    });
+  </script>
+</body>
+</html>
+`;
+
+const LIMITES_GUALEGUAYCHU = {
+  norte: -32.975,
+  sur: -33.055,
+  este: -58.475,
+  oeste: -58.565,
+};
+
+function estaDentroDeGualeguaychu(
+  latitud: number,
+  longitud: number,
+): boolean {
+  return (
+    latitud >= LIMITES_GUALEGUAYCHU.sur &&
+    latitud <= LIMITES_GUALEGUAYCHU.norte &&
+    longitud >= LIMITES_GUALEGUAYCHU.oeste &&
+    longitud <= LIMITES_GUALEGUAYCHU.este
+  );
+}
+
 export default function NuevoReporteScreen() {
   const parametros = useLocalSearchParams<{ id?: string | string[] }>();
   const idParametro = Array.isArray(parametros.id)
@@ -157,6 +221,7 @@ export default function NuevoReporteScreen() {
 
   const [reporteOriginal, setReporteOriginal] = useState<Reporte | null>(null);
   const [cargandoReporte, setCargandoReporte] = useState(esEdicion);
+  const [borradorCargado, setBorradorCargado] = useState(false);
   const [edicionPermitida, setEdicionPermitida] = useState(false);
 
   const [mostrarCamara, setMostrarCamara] = useState(false);
@@ -195,6 +260,22 @@ export default function NuevoReporteScreen() {
   const [guardandoReporte, setGuardandoReporte] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
+
+  const mapaUbicacionRef = useRef<WebView>(null);
+const [mapaUbicacionListo, setMapaUbicacionListo] = useState(false);
+
+useEffect(() => {
+  if (!mapaUbicacionListo || !coordenadas) return;
+
+  mapaUbicacionRef.current?.injectJavaScript(`
+    window.actualizarMarcador(
+      ${coordenadas.latitude},
+      ${coordenadas.longitude},
+      true
+    );
+    true;
+  `);
+}, [coordenadas, mapaUbicacionListo]);
 
   useEffect(() => {
     if (!idParametro) {
@@ -261,6 +342,101 @@ export default function NuevoReporteScreen() {
     };
   }, [idParametro]);
 
+  useEffect(() => {
+  if (esEdicion) {
+    setBorradorCargado(true);
+    return;
+  }
+
+  let activo = true;
+
+  const cargarBorradorGuardado = async () => {
+    try {
+      const borrador = await obtenerBorrador();
+
+      if (!activo || !borrador) return;
+
+      setTipoProblema(borrador.tipoProblema);
+      setDescripcion(borrador.descripcion);
+      setFoto(borrador.foto);
+      setFotoSecundaria(borrador.fotoSecundaria);
+      setAudioUri(borrador.audioUri);
+      setCoordenadas(borrador.coordenadas);
+      setDireccion(borrador.direccion);
+
+      if (
+        borrador.tipoProblema ||
+        borrador.descripcion ||
+        borrador.foto ||
+        borrador.coordenadas
+      ) {
+        Alert.alert(
+          "Borrador recuperado",
+          "Se recuperaron los datos del reporte que estabas preparando.",
+        );
+      }
+    } catch (error) {
+      console.warn("No se pudo recuperar el borrador:", error);
+    } finally {
+      if (activo) setBorradorCargado(true);
+    }
+  };
+
+  void cargarBorradorGuardado();
+
+  return () => {
+    activo = false;
+  };
+}, [esEdicion]);
+
+useEffect(() => {
+  if (esEdicion || cargandoReporte || !borradorCargado) return;
+
+  const borrador = {
+    tipoProblema,
+    descripcion,
+    foto,
+    fotoSecundaria,
+    audioUri,
+    coordenadas,
+    direccion,
+  };
+
+  const hayDatos =
+    Boolean(tipoProblema) ||
+    Boolean(descripcion) ||
+    Boolean(foto) ||
+    Boolean(fotoSecundaria) ||
+    Boolean(audioUri) ||
+    Boolean(coordenadas) ||
+    Boolean(direccion);
+
+  const guardar = async () => {
+    try {
+      if (hayDatos) {
+        await guardarBorrador(borrador);
+      } else {
+        await eliminarBorrador();
+      }
+    } catch (error) {
+      console.warn("No se pudo guardar el borrador:", error);
+    }
+  };
+
+  void guardar();
+}, [
+  esEdicion,
+  cargandoReporte,
+  borradorCargado,
+  tipoProblema,
+  descripcion,
+  foto,
+  fotoSecundaria,
+  audioUri,
+  coordenadas,
+  direccion,
+]);
+
   const iniciarGrabacion = async () => {
     if (procesandoAudio || recorderState.isRecording) return;
 
@@ -293,6 +469,7 @@ export default function NuevoReporteScreen() {
     }
   };
 
+
   const detenerGrabacion = async () => {
     if (procesandoAudio || !recorderState.isRecording) return;
 
@@ -304,18 +481,20 @@ export default function NuevoReporteScreen() {
       const uriGrabacion = audioRecorder.uri;
 
       if (uriGrabacion) {
-        const nuevoAudioTemporal = await guardarArchivoTemporal(
+        const nuevoAudioLocal = await guardarArchivoLocal(
           uriGrabacion,
           "descripcion-audio",
           "m4a",
         );
 
-        eliminarArchivoTemporal(audioUri);
-        setAudioUri(nuevoAudioTemporal);
+        if (nuevoAudioLocal) {
+          eliminarArchivoTemporal(audioUri);
+          setAudioUri(nuevoAudioLocal);
 
-        await Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Success,
-        );
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Success,
+          );
+        }
       } else {
         Alert.alert(
           "Error",
@@ -357,27 +536,32 @@ export default function NuevoReporteScreen() {
     setMostrarCamara(true);
   };
 
-  const tomarFoto = async () => {
+    const tomarFoto = async () => {
     if (!cameraRef.current) return;
 
     try {
       const resultado = await cameraRef.current.takePictureAsync();
 
       if (resultado?.uri) {
-        const nuevaFotoTemporal = await guardarArchivoTemporal(
+        const nuevaFotoLocal = await guardarArchivoLocal(
           resultado.uri,
           tomandoFotoSecundaria ? "segunda-foto" : "foto-principal",
           "jpg",
         );
 
+        if (!nuevaFotoLocal) {
+          Alert.alert("Error", "No se pudo guardar la foto.");
+          return;
+        }
+
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         if (tomandoFotoSecundaria) {
           eliminarArchivoTemporal(fotoSecundaria);
-          setFotoSecundaria(nuevaFotoTemporal);
+          setFotoSecundaria(nuevaFotoLocal);
         } else {
           eliminarArchivoTemporal(foto);
-          setFoto(nuevaFotoTemporal);
+          setFoto(nuevaFotoLocal);
         }
 
         setMostrarCamara(false);
@@ -387,13 +571,12 @@ export default function NuevoReporteScreen() {
       Alert.alert("Error", "No se pudo tomar la foto. Intentá nuevamente.");
     }
   };
-
   const cancelarCamara = () => {
     setMostrarCamara(false);
     setTomandoFotoSecundaria(false);
   };
 
-  const elegirDeGaleria = async (esSegundaFoto = false) => {
+    const elegirDeGaleria = async (esSegundaFoto = false) => {
     try {
       const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -414,18 +597,23 @@ export default function NuevoReporteScreen() {
       if (!resultado.canceled && resultado.assets.length > 0) {
         const uriImagen = resultado.assets[0].uri;
 
-        const nuevaFotoTemporal = await guardarArchivoTemporal(
+        const nuevaFotoLocal = await guardarArchivoLocal(
           uriImagen,
           esSegundaFoto ? "segunda-foto" : "foto-principal",
           "jpg",
         );
 
+        if (!nuevaFotoLocal) {
+          Alert.alert("Error", "No se pudo guardar la imagen seleccionada.");
+          return;
+        }
+
         if (esSegundaFoto) {
           eliminarArchivoTemporal(fotoSecundaria);
-          setFotoSecundaria(nuevaFotoTemporal);
+          setFotoSecundaria(nuevaFotoLocal);
         } else {
           eliminarArchivoTemporal(foto);
-          setFoto(nuevaFotoTemporal);
+          setFoto(nuevaFotoLocal);
         }
       }
     } catch (error) {
@@ -443,7 +631,7 @@ export default function NuevoReporteScreen() {
       if (!permiso.granted) {
         Alert.alert(
           "Permiso de ubicación",
-          "No se autorizó el acceso a la ubicación. Podés volver a intentarlo.",
+          "No se autorizó el acceso a la ubicación. Podés seleccionar manualmente el lugar en el mapa.",
         );
         return;
       }
@@ -458,13 +646,7 @@ export default function NuevoReporteScreen() {
         return;
       }
 
-      const ultima = await Location.getLastKnownPositionAsync();
-      if (ultima) {
-        setCoordenadas({
-          latitude: ultima.coords.latitude,
-          longitude: ultima.coords.longitude,
-        });
-      }
+
 
       const ubicacion = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -472,6 +654,14 @@ export default function NuevoReporteScreen() {
 
       const latitud = ubicacion.coords.latitude;
       const longitud = ubicacion.coords.longitude;
+
+      if (!estaDentroDeGualeguaychu(latitud, longitud)) {
+        Alert.alert(
+          "Ubicación fuera de Gualeguaychú",
+          "El GPS informó una ubicación fuera del área habilitada. Podés seleccionar manualmente el lugar correcto en el mapa.",
+        );
+        return;
+      }
 
       setCoordenadas({
         latitude: latitud,
@@ -589,7 +779,7 @@ export default function NuevoReporteScreen() {
     if (!coordenadas) {
       Alert.alert(
         "Ubicación pendiente",
-        "Obtené la ubicación GPS antes de guardar el reporte.",
+        "Seleccioná una ubicación en el mapa o utilizá el GPS antes de guardar el reporte.",
       );
       return;
     }
@@ -600,34 +790,9 @@ export default function NuevoReporteScreen() {
       const ahora = new Date().toISOString();
       const identificador = `rep-${Date.now()}`;
 
-      const fotoPrincipal = await copiarFotoADocumentos(
-        foto,
-        `${identificador}-principal.jpg`,
-      );
-      const fotoOpcional = fotoSecundaria
-        ? await copiarFotoADocumentos(
-            fotoSecundaria,
-            `${identificador}-secundaria.jpg`,
-          )
-        : null;
-
-      const fotoPrincipalLocal = await guardarArchivoLocal(
-        foto,
-        `${identificador}-principal`,
-        "jpg",
-      );
-
-      const fotoSecundariaLocal = await guardarArchivoLocal(
-        fotoSecundaria,
-        `${identificador}-secundaria`,
-        "jpg",
-      );
-
-      const audioLocal = await guardarArchivoLocal(
-        audioUri,
-        `${identificador}-audio`,
-        "m4a",
-      );
+      const fotoPrincipalLocal = foto;
+      const fotoSecundariaLocal = fotoSecundaria;
+      const audioLocal = audioUri;
 
       const nuevoReporte: Reporte = {
         id: identificador,
@@ -664,6 +829,13 @@ export default function NuevoReporteScreen() {
       };
 
       const resultado = await enviarReporte(nuevoReporte);
+
+      try {
+        await eliminarBorrador();
+      } catch (error) {
+        console.warn("No se pudo eliminar el borrador:", error);
+      }
+
 
       eliminarArchivoTemporal(foto);
       eliminarArchivoTemporal(fotoSecundaria);
@@ -925,11 +1097,95 @@ export default function NuevoReporteScreen() {
           </ThemedText>
 
           <View style={styles.previewContainer}>
-            <ThemedText type="subtitle">Ubicación del dispositivo</ThemedText>
+            <ThemedText type="subtitle">Elegí la ubicación en el mapa</ThemedText>
 
-            <ThemedText>
-              Presioná el botón para obtener las coordenadas GPS actuales.
-            </ThemedText>
+<ThemedText>
+  Tocá el lugar donde está el problema. También podés arrastrar el marcador
+  para corregir su posición.
+</ThemedText>
+
+<View style={styles.mapaUbicacionContainer}>
+  <WebView
+    ref={mapaUbicacionRef}
+    source={{ html: HTML_MAPA_UBICACION }}
+    originWhitelist={["*"]}
+    javaScriptEnabled
+    domStorageEnabled
+    onLoadEnd={() => setMapaUbicacionListo(true)}
+    onMessage={async (evento) => {
+      try {
+        const punto = JSON.parse(evento.nativeEvent.data);
+
+        if (
+  typeof punto.latitude !== "number" ||
+  typeof punto.longitude !== "number"
+) {
+  return;
+}
+
+  if (
+    !estaDentroDeGualeguaychu(
+      punto.latitude,
+      punto.longitude,
+    )
+  ) {
+    Alert.alert(
+      "Ubicación fuera del área habilitada",
+      "Seleccioná un punto dentro de Gualeguaychú.",
+    );
+    return;
+  }
+
+  setCoordenadas({
+          latitude: punto.latitude,
+          longitude: punto.longitude,
+        });
+        setDireccion("");
+
+        try {
+          const cercanos = await obtenerReportesCercanos(
+            punto.latitude,
+            punto.longitude,
+            50,
+          );
+
+          if (cercanos.length > 0) {
+            const primero = cercanos[0];
+
+            Alert.alert(
+              "¿Es el mismo problema?",
+              `Ya ${
+                cercanos.length === 1 ? "hay un reporte" : `hay ${cercanos.length} reportes`
+              } a menos de 50 m: ${primero.tipo} en ${primero.direccionDescripcion}. Si es el mismo, podés sumarte en vez de crear otro.`,
+              [
+                {
+                  text: "Ver ese reporte",
+                  onPress: () =>
+                    router.push({
+                      pathname: "/reportes/[id]",
+                      params: { id: primero.id },
+                    }),
+                },
+                { text: "Es otro problema", style: "cancel" },
+              ],
+            );
+          }
+        } catch (error) {
+          console.warn("No se pudieron consultar reportes cercanos:", error);
+        }
+      } catch (error) {
+        console.warn("No se pudo interpretar la ubicación del mapa:", error);
+      }
+    }}
+    style={styles.mapaUbicacion}
+  />
+</View>
+
+<ThemedText type="subtitle">O usar la ubicación GPS</ThemedText>
+
+<ThemedText>
+  Si preferís, podés obtener automáticamente la ubicación actual del dispositivo.
+</ThemedText>
 
             <Button
               title={
@@ -1317,6 +1573,20 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 12,
   },
+  mapaUbicacionContainer: {
+  width: "100%",
+  height: 300,
+  overflow: "hidden",
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: "#777777",
+  },
+
+  mapaUbicacion: {
+  flex: 1,
+  backgroundColor: "#EEEEEE",
+  },
+
   preview: {
     width: "100%",
     height: 250,

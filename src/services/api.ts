@@ -2,6 +2,10 @@ import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
+import { File } from "expo-file-system";
+import { fetch as expoFetch } from "expo/fetch";
+
+import * as ImageManipulator from "expo-image-manipulator";
 const hostDesdeExpo = Constants.expoConfig?.hostUri?.split(":")[0];
 
 export const API_URL =
@@ -107,9 +111,10 @@ async function pedir<T>(
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-  } catch {
+    } catch (error) {
+    console.error("FALLÓ LA PETICIÓN A LA API:", ruta, error);
     throw new ErrorDeRed();
-  }
+    }
 
   const texto = await respuesta.text();
   const json = texto ? JSON.parse(texto) : null;
@@ -171,26 +176,90 @@ function mimeDe(uri: string): string {
   }
 }
 
+
+
 export async function subirArchivo(uriLocal: string): Promise<string> {
   const token = await leerItemSeguro(TOKEN_KEY);
-  const mime = mimeDe(uriLocal);
+  const MAX_BYTES = 5 * 1024 * 1024;
 
+  let uriParaSubir = uriLocal;
+  let extension = extensionDe(uriLocal);
+
+  const extensionOriginal = extension.toLowerCase();
+  const esImagen = ["jpg", "jpeg", "png", "webp"].includes(
+    extensionOriginal,
+  );
+
+  const archivoOriginal = new File(uriLocal);
+
+  // Comprimir solamente imágenes que superen los 5 MB.
+  if (esImagen && archivoOriginal.size > MAX_BYTES) {
+    console.log(
+      "Comprimiendo imagen:",
+      (archivoOriginal.size / 1024 / 1024).toFixed(2),
+      "MB",
+    );
+
+    const intentos = [
+      { width: 1600, compress: 0.7 },
+      { width: 1200, compress: 0.55 },
+      { width: 900, compress: 0.4 },
+      { width: 700, compress: 0.3 },
+    ];
+
+    let comprimidaCorrectamente = false;
+
+    for (const intento of intentos) {
+      const resultado = await ImageManipulator.manipulateAsync(
+        uriLocal,
+        [{ resize: { width: intento.width } }],
+        {
+          compress: intento.compress,
+          format: ImageManipulator.SaveFormat.JPEG,
+        },
+      );
+
+      const archivoComprimido = new File(resultado.uri);
+
+      console.log(
+        "Resultado de compresión:",
+        (archivoComprimido.size / 1024 / 1024).toFixed(2),
+        "MB",
+      );
+
+      if (archivoComprimido.size <= MAX_BYTES) {
+        uriParaSubir = resultado.uri;
+        extension = "jpg";
+        comprimidaCorrectamente = true;
+        break;
+      }
+    }
+
+    if (!comprimidaCorrectamente) {
+      throw new ErrorApi(
+        "ARCHIVO_DEMASIADO_GRANDE",
+        "No se pudo reducir la foto a menos de 5 MB. Probá con otra fotografía.",
+      );
+    }
+  }
+
+  const archivo = new File(uriParaSubir);
   const datos = new FormData();
 
-  datos.append("archivo", {
-    uri: uriLocal,
-    name: `subida.${extensionDe(uriLocal)}`,
-    type: mime,
-  } as unknown as Blob);
+  datos.append("archivo", archivo, `subida.${extension}`);
 
   let respuesta: Response;
+
   try {
-    respuesta = await fetch(`${API_URL}/archivos`, {
+    respuesta = await expoFetch(`${API_URL}/archivos`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: token
+        ? { Authorization: `Bearer ${token}` }
+        : undefined,
       body: datos,
     });
-  } catch {
+  } catch (error) {
+    console.error("FALLÓ LA SUBIDA DEL ARCHIVO:", uriParaSubir, error);
     throw new ErrorDeRed();
   }
 
@@ -198,6 +267,7 @@ export async function subirArchivo(uriLocal: string): Promise<string> {
 
   if (!respuesta.ok) {
     const error = (json as SobreError | null)?.error;
+
     throw new ErrorApi(
       error?.codigo ?? "ERROR_DESCONOCIDO",
       error?.mensaje ?? "No se pudo subir el archivo.",
@@ -210,5 +280,7 @@ export async function subirArchivo(uriLocal: string): Promise<string> {
     ? sobre.datos.url
     : `${API_URL}${sobre.datos.url}`;
 }
+
+
 
 export { escribirItemSeguro, leerItemSeguro };

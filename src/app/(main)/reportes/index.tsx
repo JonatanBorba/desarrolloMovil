@@ -24,6 +24,7 @@ export default function MisReportesScreen() {
   const [reportes, setReportes] = useState<Reporte[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(false);
+  const [sinConexion, setSinConexion] = useState(false);
 
   const cargarReportes = useCallback(async () => {
     setCargando(true);
@@ -48,9 +49,27 @@ export default function MisReportesScreen() {
     }, [cargarReportes]),
   );
 
+
+
   return (
     <ThemedView style={styles.contenedor}>
       <ThemedText type="title">Mis reportes</ThemedText>
+
+            {sinConexion && (
+        <ThemedText
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 8,
+            backgroundColor: "#FFF0D5",
+            color: "#805000",
+          }}
+        >
+          Sin conexión a internet. Tus reportes se guardan en este dispositivo
+          y se sincronizarán cuando vuelva la conexión.
+        </ThemedText>
+      )}
+
 
       {cargando ? (
         <View style={styles.centrado}>
