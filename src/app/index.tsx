@@ -1,8 +1,10 @@
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
-import { Link } from "expo-router";
+import * as LocalAuthentication from "expo-local-authentication";
+import { Link, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -12,8 +14,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { getStoredSession } from "@/services/auth";
+
 export default function HomeScreen() {
+  const router = useRouter();
   const [mostrarSplash, setMostrarSplash] = useState(true);
+  const [nombreGuardado, setNombreGuardado] = useState<string | null>(null);
+  const [entrandoConHuella, setEntrandoConHuella] = useState(false);
   const esOscuro = useColorScheme() === "dark";
 
   useEffect(() => {
@@ -21,8 +28,57 @@ export default function HomeScreen() {
       setMostrarSplash(false);
     }, 2000);
 
+    void getStoredSession().then((sesion) => {
+      if (sesion?.usuario?.nombre) {
+        setNombreGuardado(sesion.usuario.nombre);
+      }
+    });
+
     return () => clearTimeout(timer);
   }, []);
+
+  // Reingreso con huella/rostro (punto 2). Si el dispositivo no tiene
+  // biometría, queda el ingreso con contraseña como alternativa.
+  const ingresarConBiometria = async () => {
+    if (entrandoConHuella) return;
+
+    try {
+      setEntrandoConHuella(true);
+
+      const hayHardware = await LocalAuthentication.hasHardwareAsync();
+      const hayRegistrada = await LocalAuthentication.isEnrolledAsync();
+
+      if (!hayHardware || !hayRegistrada) {
+        Alert.alert(
+          "Sin biometría",
+          "Este dispositivo no tiene huella ni rostro configurado. Ingresá con tu contraseña.",
+        );
+        router.push("/(auth)/login");
+        return;
+      }
+
+      const resultado = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Continuá con tu huella o rostro",
+        cancelLabel: "Cancelar",
+      });
+
+      if (!resultado.success) return;
+
+      const sesion = await getStoredSession();
+      if (!sesion) {
+        router.push("/(auth)/login");
+        return;
+      }
+
+      router.replace(
+        sesion.role === "operador" ? "/(operador)/bandeja" : "/(main)/reportes",
+      );
+    } catch (error) {
+      console.warn("No se pudo autenticar con biometría:", error);
+    } finally {
+      setEntrandoConHuella(false);
+    }
+  };
 
   if (mostrarSplash) {
     return (
@@ -64,6 +120,22 @@ export default function HomeScreen() {
           </ThemedText>
 
           <ThemedView style={styles.actions}>
+            {nombreGuardado ? (
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => {
+                  void ingresarConBiometria();
+                }}
+                disabled={entrandoConHuella}
+              >
+                <ThemedText type="default" style={styles.primaryLabel}>
+                  {entrandoConHuella
+                    ? "Autenticando..."
+                    : `Continuar como ${nombreGuardado}`}
+                </ThemedText>
+              </TouchableOpacity>
+            ) : null}
+
             <Link href="/(auth)/login" asChild>
               <TouchableOpacity style={styles.primaryButton}>
                 <ThemedText type="default" style={styles.primaryLabel}>

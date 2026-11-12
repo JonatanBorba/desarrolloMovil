@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
@@ -60,8 +61,11 @@ export class ErrorApi extends Error {
 
 /** Error de red: la API no respondió (servidor apagado, sin señal, otra red). */
 export class ErrorDeRed extends Error {
-  constructor() {
-    super("No se pudo conectar con el servidor. Revisá tu conexión.");
+  constructor(detalle?: string) {
+    super(
+      "No se pudo conectar con el servidor. Revisá tu conexión." +
+        (detalle ? ` (${detalle})` : ""),
+    );
     this.name = "ErrorDeRed";
   }
 }
@@ -108,7 +112,7 @@ async function pedir<T>(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new ErrorDeRed();
+    throw new ErrorDeRed(`${API_URL}${ruta}`);
   }
 
   const texto = await respuesta.text();
@@ -175,28 +179,27 @@ export async function subirArchivo(uriLocal: string): Promise<string> {
   const token = await leerItemSeguro(TOKEN_KEY);
   const mime = mimeDe(uriLocal);
 
-  const datos = new FormData();
-
-  datos.append("archivo", {
-    uri: uriLocal,
-    name: `subida.${extensionDe(uriLocal)}`,
-    type: mime,
-  } as unknown as Blob);
-
-  let respuesta: Response;
+  // uploadAsync envía el archivo como multipart desde el sistema de
+  // archivos nativo: el FormData de fetch no acepta partes {uri} en esta
+  // versión ("Unsupported FormDataPart implementation").
+  let respuesta: { status: number; body: string };
   try {
-    respuesta = await fetch(`${API_URL}/archivos`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      body: datos,
+    respuesta = await FileSystem.uploadAsync(`${API_URL}/archivos`, uriLocal, {
+      httpMethod: "POST",
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: "archivo",
+      mimeType: mime,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-  } catch {
-    throw new ErrorDeRed();
+  } catch (e) {
+    throw new ErrorDeRed(
+      `${API_URL}/archivos → ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 
-  const json = await respuesta.json();
+  const json = respuesta.body ? JSON.parse(respuesta.body) : null;
 
-  if (!respuesta.ok) {
+  if (respuesta.status < 200 || respuesta.status >= 300) {
     const error = (json as SobreError | null)?.error;
     throw new ErrorApi(
       error?.codigo ?? "ERROR_DESCONOCIDO",

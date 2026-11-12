@@ -1,22 +1,16 @@
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { router } from "expo-router";
+import { useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { router } from 'expo-router';
-import { useRef, useState } from 'react';
-import {
-    ActivityIndicator,
-    Pressable,
-    StyleSheet,
-    View,
-} from 'react-native';
-
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { obtenerReportes } from '@/services/almacenamientoReportes';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { obtenerReportePorCodigo } from "@/services/operador";
 
 export default function EscanearQRScreen() {
   const [permiso, solicitarPermiso] = useCameraPermissions();
   const [procesando, setProcesando] = useState(false);
-  const [mensaje, setMensaje] = useState('');
+  const [mensaje, setMensaje] = useState("");
 
   const escaneoEnCurso = useRef(false);
 
@@ -27,37 +21,25 @@ export default function EscanearQRScreen() {
 
     escaneoEnCurso.current = true;
     setProcesando(true);
-    setMensaje('');
+    setMensaje("");
 
     try {
       const codigo = codigoLeido.trim();
 
       if (!codigo) {
-        setMensaje('El código QR está vacío. Intentá nuevamente.');
+        setMensaje("El código QR está vacío. Intentá nuevamente.");
         return;
       }
 
-      const reportes = await obtenerReportes();
-
-      const reporteEncontrado = reportes.find(
-        (reporte) =>
-          reporte.codigoSeguimiento.trim() === codigo
-      );
-
-      if (!reporteEncontrado) {
-        setMensaje(
-          'No encontramos un reporte con ese código en este dispositivo.'
-        );
-        return;
-      }
+      const reporteEncontrado = await obtenerReportePorCodigo(codigo);
 
       router.replace({
-        pathname: '/(operador)/reporte/[id]',
+        pathname: "/(operador)/reporte/[id]",
         params: { id: reporteEncontrado.id },
       });
     } catch (error) {
-      console.error('Error al buscar el reporte escaneado:', error);
-      setMensaje('No se pudo consultar el reporte. Intentá nuevamente.');
+      console.error("Error al buscar el reporte escaneado:", error);
+      setMensaje("No se pudo consultar el reporte. Intentá nuevamente.");
     } finally {
       setProcesando(false);
       escaneoEnCurso.current = false;
@@ -79,23 +61,17 @@ export default function EscanearQRScreen() {
         <ThemedText type="title">Escanear código QR</ThemedText>
 
         <ThemedText>
-          Necesitamos permiso para utilizar la cámara y leer el código QR
-          del reclamo.
+          Necesitamos permiso para utilizar la cámara y leer el código QR del
+          reclamo.
         </ThemedText>
 
-        <Pressable
-          style={styles.boton}
-          onPress={solicitarPermiso}
-        >
+        <Pressable style={styles.boton} onPress={solicitarPermiso}>
           <ThemedText style={styles.textoBoton}>
             Permitir acceso a la cámara
           </ThemedText>
         </Pressable>
 
-        <Pressable
-          style={styles.botonSecundario}
-          onPress={() => router.back()}
-        >
+        <Pressable style={styles.botonSecundario} onPress={() => router.back()}>
           <ThemedText>Volver a la bandeja</ThemedText>
         </Pressable>
       </ThemedView>
@@ -107,8 +83,7 @@ export default function EscanearQRScreen() {
       <ThemedText type="title">Escanear código QR</ThemedText>
 
       <ThemedText>
-        Ubicá el código QR del vecino dentro del recuadro para abrir su
-        reclamo.
+        Ubicá el código QR del vecino dentro del recuadro para abrir su reclamo.
       </ThemedText>
 
       <View style={styles.contenedorCamara}>
@@ -116,7 +91,7 @@ export default function EscanearQRScreen() {
           style={styles.camara}
           facing="back"
           barcodeScannerSettings={{
-            barcodeTypes: ['qr'],
+            barcodeTypes: ["qr"],
           }}
           onBarcodeScanned={
             procesando
@@ -153,21 +128,16 @@ export default function EscanearQRScreen() {
           <Pressable
             style={styles.boton}
             onPress={() => {
-              setMensaje('');
+              setMensaje("");
               escaneoEnCurso.current = false;
             }}
           >
-            <ThemedText style={styles.textoBoton}>
-              Volver a escanear
-            </ThemedText>
+            <ThemedText style={styles.textoBoton}>Volver a escanear</ThemedText>
           </Pressable>
         </View>
       ) : null}
 
-      <Pressable
-        style={styles.botonSecundario}
-        onPress={() => router.back()}
-      >
+      <Pressable style={styles.botonSecundario} onPress={() => router.back()}>
         <ThemedText>Volver a la bandeja</ThemedText>
       </Pressable>
     </ThemedView>
@@ -181,94 +151,94 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   contenedorCamara: {
-    width: '100%',
+    width: "100%",
     height: 340,
     borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#111111',
-    justifyContent: 'center',
-    alignItems: 'center',
+    overflow: "hidden",
+    backgroundColor: "#111111",
+    justifyContent: "center",
+    alignItems: "center",
   },
   camara: {
-    width: '100%',
-    height: '100%',
+    width: "100%",
+    height: "100%",
   },
   marco: {
-    position: 'absolute',
+    position: "absolute",
     width: 230,
     height: 230,
   },
   esquinaSuperiorIzquierda: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     width: 40,
     height: 40,
     borderTopWidth: 4,
     borderLeftWidth: 4,
-    borderColor: '#FFFFFF',
+    borderColor: "#FFFFFF",
   },
   esquinaSuperiorDerecha: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     right: 0,
     width: 40,
     height: 40,
     borderTopWidth: 4,
     borderRightWidth: 4,
-    borderColor: '#FFFFFF',
+    borderColor: "#FFFFFF",
   },
   esquinaInferiorIzquierda: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     left: 0,
     width: 40,
     height: 40,
     borderBottomWidth: 4,
     borderLeftWidth: 4,
-    borderColor: '#FFFFFF',
+    borderColor: "#FFFFFF",
   },
   esquinaInferiorDerecha: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     right: 0,
     width: 40,
     height: 40,
     borderBottomWidth: 4,
     borderRightWidth: 4,
-    borderColor: '#FFFFFF',
+    borderColor: "#FFFFFF",
   },
   instruccion: {
-    textAlign: 'center',
+    textAlign: "center",
   },
   estado: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
   },
   mensaje: {
     padding: 12,
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 10,
     gap: 12,
   },
   boton: {
-    backgroundColor: '#246B45',
+    backgroundColor: "#246B45",
     padding: 14,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
   textoBoton: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   botonSecundario: {
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     padding: 14,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
 });

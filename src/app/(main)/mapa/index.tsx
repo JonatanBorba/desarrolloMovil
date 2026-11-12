@@ -30,10 +30,10 @@ import type { EstadoReporte, Reporte } from "@/tipos/reporte";
 const CENTRO = { lat: -33.0094, lon: -58.518 };
 
 /**
- * El mapa es un Leaflet dentro de un WebView: así funciona en Expo Go
- * sin API key de Google (react-native-maps queda negro en Android sin
- * clave). Los marcadores se inyectan como circleMarkers de colores y
- * los toques vuelven por ReactNativeWebView.postMessage.
+ * El mapa es un Leaflet dentro de un WebView: react-native-maps usa el
+ * proveedor de Google y en Expo Go queda negro sin API key paga. Los
+ * marcadores se inyectan como circleMarkers de colores y los toques
+ * vuelven por ReactNativeWebView.postMessage.
  */
 const HTML_MAPA = `<!DOCTYPE html>
 <html>
@@ -154,15 +154,17 @@ export default function MapaReportesScreen() {
     [reportes, filtroTipo, filtroEstado],
   );
 
-  const centrarEnMiUbicacion = async () => {
+  const centrarEnMiUbicacion = async (avisar = true) => {
     try {
       const permiso = await Location.requestForegroundPermissionsAsync();
 
       if (!permiso.granted) {
-        Alert.alert(
-          "Permiso de ubicación",
-          "Sin ubicación el mapa funciona igual, pero no podemos mostrarte los reportes cercanos a vos.",
-        );
+        if (avisar) {
+          Alert.alert(
+            "Permiso de ubicación",
+            "Sin ubicación el mapa funciona igual, pero no podemos mostrarte los reportes cercanos a vos.",
+          );
+        }
         return;
       }
 
@@ -181,12 +183,20 @@ export default function MapaReportesScreen() {
       );
     } catch (e) {
       console.error("Error al obtener la ubicación:", e);
-      Alert.alert(
-        "Error",
-        "No se pudo obtener tu ubicación. El mapa sigue funcionando normalmente.",
-      );
+      if (avisar) {
+        Alert.alert(
+          "Error",
+          "No se pudo obtener tu ubicación. El mapa sigue funcionando normalmente.",
+        );
+      }
     }
   };
+
+  useEffect(() => {
+    if (!mapaListo) return;
+    void centrarEnMiUbicacion(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapaListo]);
 
   // Cada vez que cambian los filtros o llegan datos, se re-dibujan
   // los marcadores dentro del WebView.
@@ -330,8 +340,8 @@ export default function MapaReportesScreen() {
         </ScrollView>
       </View>
 
-      {/* Mapa con Leaflet dentro de un WebView: funciona en Expo Go
-          sin API key de Google. */}
+      {/* Mapa con Leaflet dentro de un WebView: react-native-maps
+          queda negro en Expo Go sin API key de Google. */}
       <WebView
         ref={webViewRef}
         style={styles.mapa}
@@ -344,7 +354,10 @@ export default function MapaReportesScreen() {
       />
 
       {/* Botón de ubicación */}
-      <Pressable style={styles.botonUbicacion} onPress={centrarEnMiUbicacion}>
+      <Pressable
+        style={styles.botonUbicacion}
+        onPress={() => centrarEnMiUbicacion()}
+      >
         <ThemedText style={styles.botonUbicacionTexto}>Cerca de mí</ThemedText>
       </Pressable>
 

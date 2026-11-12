@@ -1,4 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { File } from "expo-file-system";
+import AsyncStorage from "expo-sqlite/kv-store";
 
 import { reportesPublicosMock } from "@/mocks/reportesPublicos";
 import {
@@ -7,7 +8,17 @@ import {
   obtenerReportePorId,
   obtenerReportes,
 } from "@/services/almacenamientoReportes";
-import { apiLista, apiUno, ErrorDeRed, subirArchivo } from "@/services/api";
+import {
+  apiLista,
+  apiUno,
+  ErrorApi,
+  ErrorDeRed,
+  subirArchivo,
+} from "@/services/api";
+import {
+  notificarCambioDeEstado,
+  notificarVecinoSumado,
+} from "@/services/notificaciones";
 import type {
   CambioDeEstadoApi,
   EstadoReporteApi,
@@ -31,11 +42,19 @@ const ESTADO_DESDE_API: Record<EstadoReporteApi, EstadoReporte> = {
   rechazado: "RECHAZADO",
 };
 
+export const ESTADO_HACIA_API: Record<EstadoReporte, EstadoReporteApi> = {
+  RECIBIDO: "recibido",
+  EN_REVISION: "en_revision",
+  ASIGNADO_CUADRILLA: "asignado",
+  RESUELTO: "resuelto",
+  RECHAZADO: "rechazado",
+};
+
 function traducirEstado(estado: EstadoReporteApi): EstadoReporte {
   return ESTADO_DESDE_API[estado];
 }
 
-function traducirCambio(cambio: CambioDeEstadoApi): CambioEstadoReporte {
+export function traducirCambio(cambio: CambioDeEstadoApi): CambioEstadoReporte {
   return {
     id: cambio.id,
     fecha: cambio.fechaHora,
@@ -46,7 +65,7 @@ function traducirCambio(cambio: CambioDeEstadoApi): CambioEstadoReporte {
 
 type CatalogoTipos = Map<string, string>;
 
-function traducirReporte(
+export function traducirReporte(
   api: ReporteApi,
   catalogo: CatalogoTipos,
   cambios: CambioEstadoReporte[],
@@ -112,7 +131,7 @@ export async function obtenerTiposDeReporte(): Promise<TipoDeReporte[]> {
   }
 }
 
-async function cargarCatalogo(): Promise<CatalogoTipos> {
+export async function cargarCatalogo(): Promise<CatalogoTipos> {
   if (catalogoTipos) return catalogoTipos;
   await obtenerTiposDeReporte();
   return catalogoTipos ?? new Map();
@@ -150,6 +169,25 @@ export async function obtenerMisReportes(): Promise<Reporte[]> {
         false,
       ),
     );
+
+    // Punto 5: comparar contra la copia local para avisar al vecino si
+    // cambió el estado o si se sumaron vecinos a un reporte suyo.
+    const localesPorId = new Map(locales.map((r) => [r.id, r]));
+    for (const remoto of mios) {
+      const previo = localesPorId.get(remoto.id);
+      if (previo && previo.sincronizado) {
+        if (previo.estadoActual !== remoto.estadoActual) {
+          await notificarCambioDeEstado(remoto.tipo, remoto.estadoActual);
+        }
+        if (remoto.vecinosSumados > previo.vecinosSumados) {
+          await notificarVecinoSumado(remoto.tipo, remoto.vecinosSumados);
+        }
+      }
+
+      // Guardamos la versión fresca para no repetir el aviso en el
+      // próximo refresh.
+      await guardarReporte(remoto);
+    }
 
     return [...pendientes, ...mios];
   } catch (error) {
@@ -303,8 +341,13 @@ async function subirFotosPendientes(reporte: Reporte): Promise<{
 }> {
   const subir = async (local: string | null, remota: string | null) => {
     if (remota) return remota;
-    if (local) return subirArchivo(local);
-    return null;
+    if (!local) return null;
+
+    if (!new File(local).exists) {
+      throw new Error(`El archivo local ya no existe en el teléfono: ${local}`);
+    }
+
+    return subirArchivo(local);
   };
 
   return {
@@ -368,6 +411,11 @@ export async function enviarReporte(reporte: Reporte): Promise<Reporte> {
   } catch (error) {
     if (error instanceof ErrorDeRed) {
       // Sin conexión: queda en la cola local y se sube solo después.
+      console.warn(
+        `[sync] Error de red al subir ${reporte.id}:`,
+        error.message,
+      );
+
       const pendiente: Reporte = {
         ...reporte,
         sincronizado: false,
@@ -387,8 +435,12 @@ export async function sincronizarPendientes(): Promise<void> {
   for (const reporte of pendientes) {
     try {
       await enviarReporte(reporte);
-    } catch {
+    } catch (error) {
       // Si falla uno seguimos con los demás: queda pendiente.
+      console.warn(
+        `[sync] No se pudo subir el reporte ${reporte.id}:`,
+        error instanceof ErrorApi ? `${error.codigo}: ${error.message}` : error,
+      );
     }
   }
 }

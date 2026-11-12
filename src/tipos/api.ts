@@ -58,6 +58,20 @@ export interface UsuarioApi {
   creadoEn: string;
 }
 
+export interface CuadrillaApi {
+  id: string;
+  nombre: string;
+  zonaId: string;
+  especialidad: string;
+  activa: boolean;
+}
+
+export interface ZonaApi {
+  id: string;
+  nombre: string;
+  referente: string;
+}
+
 export interface SesionApi {
   token: string;
   usuario: UsuarioApi;

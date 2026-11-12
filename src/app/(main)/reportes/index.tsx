@@ -5,12 +5,17 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
+  Switch,
   View,
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { colorEstado, nombreEstado } from "@/constants/estados";
+import {
+  avisosHabilitados,
+  guardarPreferenciaAvisos,
+} from "@/services/notificaciones";
 import { obtenerMisReportes, sincronizarPendientes } from "@/services/reportes";
 import type { Reporte } from "@/tipos/reporte";
 
@@ -22,6 +27,7 @@ function fechaCorta(iso: string): string {
 
 export default function MisReportesScreen() {
   const [reportes, setReportes] = useState<Reporte[]>([]);
+  const [avisos, setAvisos] = useState(true);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(false);
 
@@ -32,14 +38,23 @@ export default function MisReportesScreen() {
     try {
       // Los reportes creados sin conexión se suben solos acá.
       await sincronizarPendientes();
-      const propios = await obtenerMisReportes();
+      const [propios, avisosActivos] = await Promise.all([
+        obtenerMisReportes(),
+        avisosHabilitados(),
+      ]);
       setReportes(propios);
+      setAvisos(avisosActivos);
     } catch (e) {
       console.error("Error al cargar Mis reportes:", e);
       setError(true);
     } finally {
       setCargando(false);
     }
+  }, []);
+
+  const cambiarAvisos = useCallback(async (valor: boolean) => {
+    setAvisos(valor);
+    await guardarPreferenciaAvisos(valor);
   }, []);
 
   useFocusEffect(
@@ -51,6 +66,16 @@ export default function MisReportesScreen() {
   return (
     <ThemedView style={styles.contenedor}>
       <ThemedText type="title">Mis reportes</ThemedText>
+
+      <View style={styles.fila}>
+        <ThemedText>Recibir avisos</ThemedText>
+        <Switch
+          value={avisos}
+          onValueChange={(valor) => {
+            void cambiarAvisos(valor);
+          }}
+        />
+      </View>
 
       {cargando ? (
         <View style={styles.centrado}>

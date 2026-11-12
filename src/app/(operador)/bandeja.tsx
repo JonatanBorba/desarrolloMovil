@@ -1,48 +1,40 @@
-
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   StyleSheet,
   View,
-} from 'react-native';
+} from "react-native";
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { obtenerReportes } from '@/services/almacenamientoReportes';
-import type { EstadoReporte, Reporte } from '@/tipos/reporte';
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { nombreEstado } from "@/constants/estados";
+import { obtenerBandeja, zonaDelOperador } from "@/services/operador";
+import { obtenerTiposDeReporte } from "@/services/reportes";
+import type { EstadoReporteApi } from "@/tipos/api";
+import type { Reporte, TipoDeReporte } from "@/tipos/reporte";
 
-const ESTADOS: Array<{ etiqueta: string; valor: EstadoReporte | 'TODOS' }> = [
-  { etiqueta: 'Todos', valor: 'TODOS' },
-  { etiqueta: 'Recibido', valor: 'RECIBIDO' },
-  { etiqueta: 'En revisión', valor: 'EN_REVISION' },
-  { etiqueta: 'Asignado', valor: 'ASIGNADO_CUADRILLA' },
-  { etiqueta: 'Resuelto', valor: 'RESUELTO' },
-  { etiqueta: 'Rechazado', valor: 'RECHAZADO' },
-];
-
-function nombreEstado(estado: EstadoReporte): string {
-  switch (estado) {
-    case 'RECIBIDO':
-      return 'Recibido';
-    case 'EN_REVISION':
-      return 'En revisión';
-    case 'ASIGNADO_CUADRILLA':
-      return 'Asignado a una cuadrilla';
-    case 'RESUELTO':
-      return 'Resuelto';
-    case 'RECHAZADO':
-      return 'Rechazado';
-  }
-}
+const ESTADOS: Array<{ etiqueta: string; valor: EstadoReporteApi | "TODOS" }> =
+  [
+    { etiqueta: "Todos", valor: "TODOS" },
+    { etiqueta: "Recibido", valor: "recibido" },
+    { etiqueta: "En revisión", valor: "en_revision" },
+    { etiqueta: "Asignado", valor: "asignado" },
+    { etiqueta: "Resuelto", valor: "resuelto" },
+    { etiqueta: "Rechazado", valor: "rechazado" },
+  ];
 
 export default function BandejaOperadorScreen() {
   const [reportes, setReportes] = useState<Reporte[]>([]);
-  const [estadoSeleccionado, setEstadoSeleccionado] =
-    useState<EstadoReporte | 'TODOS'>('TODOS');
-  const [tipoSeleccionado, setTipoSeleccionado] = useState('TODOS');
+  const [tipos, setTipos] = useState<TipoDeReporte[]>([]);
+  const [estadoSeleccionado, setEstadoSeleccionado] = useState<
+    EstadoReporteApi | "TODOS"
+  >("TODOS");
+  const [tipoSeleccionado, setTipoSeleccionado] = useState<string | null>(null);
+  const [soloMiZona, setSoloMiZona] = useState(true);
+  const [miZona, setMiZona] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(false);
 
@@ -51,52 +43,65 @@ export default function BandejaOperadorScreen() {
     setError(false);
 
     try {
-      setReportes(await obtenerReportes());
+      const zonaOperador = await zonaDelOperador();
+      setMiZona(zonaOperador);
+
+      const [datos, tiposApi] = await Promise.all([
+        obtenerBandeja({
+          estado:
+            estadoSeleccionado === "TODOS" ? undefined : estadoSeleccionado,
+          tipoId: tipoSeleccionado ?? undefined,
+          zonaId: soloMiZona && zonaOperador ? zonaOperador : "todas",
+        }),
+        obtenerTiposDeReporte(),
+      ]);
+
+      setReportes(datos);
+      setTipos(tiposApi);
     } catch (e) {
-      console.error('Error al cargar la bandeja:', e);
+      console.error("Error al cargar la bandeja:", e);
       setError(true);
     } finally {
       setCargando(false);
     }
-  }, []);
+  }, [estadoSeleccionado, tipoSeleccionado, soloMiZona]);
 
   useFocusEffect(
     useCallback(() => {
       void cargarReportes();
-    }, [cargarReportes])
+    }, [cargarReportes]),
   );
-
-  const tipos = ['TODOS', ...new Set(reportes.map((reporte) => reporte.tipo))];
-
-  const reportesFiltrados = reportes.filter((reporte) => {
-    const coincideEstado =
-      estadoSeleccionado === 'TODOS' ||
-      reporte.estadoActual === estadoSeleccionado;
-
-    const coincideTipo =
-      tipoSeleccionado === 'TODOS' ||
-      reporte.tipo === tipoSeleccionado;
-
-    return coincideEstado && coincideTipo;
-  });
 
   return (
     <ThemedView style={styles.contenedor}>
       <ThemedText type="title">Bandeja de reportes</ThemedText>
 
-      <ThemedText>
-        Reportes guardados en este dispositivo: {reportes.length}
-      </ThemedText>
+      <ThemedText>Reportes abiertos: {reportes.length}</ThemedText>
 
       <Pressable
         accessibilityRole="button"
         style={styles.botonEscanear}
-        onPress={() => router.push('/(operador)/escanear')}
+        onPress={() => router.push("/(operador)/escanear")}
       >
-        <ThemedText style={styles.textoBotonEscanear}>
-          ▦ Escanear QR
-        </ThemedText>
+        <ThemedText style={styles.textoBotonEscanear}>▦ Escanear QR</ThemedText>
       </Pressable>
+
+      {miZona ? (
+        <View style={styles.filtros}>
+          <Pressable
+            onPress={() => setSoloMiZona(true)}
+            style={[styles.filtro, soloMiZona && styles.filtroActivo]}
+          >
+            <ThemedText>Mi zona</ThemedText>
+          </Pressable>
+          <Pressable
+            onPress={() => setSoloMiZona(false)}
+            style={[styles.filtro, !soloMiZona && styles.filtroActivo]}
+          >
+            <ThemedText>Todas las zonas</ThemedText>
+          </Pressable>
+        </View>
+      ) : null}
 
       <ThemedText type="subtitle">Filtrar por estado</ThemedText>
 
@@ -118,16 +123,25 @@ export default function BandejaOperadorScreen() {
       <ThemedText type="subtitle">Filtrar por tipo</ThemedText>
 
       <View style={styles.filtros}>
+        <Pressable
+          onPress={() => setTipoSeleccionado(null)}
+          style={[
+            styles.filtro,
+            tipoSeleccionado === null && styles.filtroActivo,
+          ]}
+        >
+          <ThemedText>Todos</ThemedText>
+        </Pressable>
         {tipos.map((tipo) => (
           <Pressable
-            key={tipo}
-            onPress={() => setTipoSeleccionado(tipo)}
+            key={tipo.id}
+            onPress={() => setTipoSeleccionado(tipo.id)}
             style={[
               styles.filtro,
-              tipoSeleccionado === tipo && styles.filtroActivo,
+              tipoSeleccionado === tipo.id && styles.filtroActivo,
             ]}
           >
-            <ThemedText>{tipo === 'TODOS' ? 'Todos' : tipo}</ThemedText>
+            <ThemedText>{tipo.nombre}</ThemedText>
           </Pressable>
         ))}
       </View>
@@ -139,15 +153,13 @@ export default function BandejaOperadorScreen() {
         </View>
       ) : error ? (
         <View style={styles.centrado}>
-          <ThemedText>
-            No se pudieron cargar los reportes guardados.
-          </ThemedText>
+          <ThemedText>No se pudieron cargar los reportes guardados.</ThemedText>
 
           <Pressable onPress={cargarReportes} style={styles.boton}>
             <ThemedText style={styles.textoBoton}>Reintentar</ThemedText>
           </Pressable>
         </View>
-      ) : reportesFiltrados.length === 0 ? (
+      ) : reportes.length === 0 ? (
         <View style={styles.centrado}>
           <ThemedText>
             No hay reportes que coincidan con los filtros seleccionados.
@@ -156,7 +168,7 @@ export default function BandejaOperadorScreen() {
       ) : (
         <FlatList
           style={styles.lista}
-          data={reportesFiltrados}
+          data={reportes}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.contenidoLista}
           renderItem={({ item }) => (
@@ -164,20 +176,20 @@ export default function BandejaOperadorScreen() {
               style={styles.tarjeta}
               onPress={() =>
                 router.push({
-                  pathname: '/(operador)/reporte/[id]',
+                  pathname: "/(operador)/reporte/[id]",
                   params: { id: item.id },
                 })
               }
             >
               <ThemedText type="subtitle">{item.tipo}</ThemedText>
               <ThemedText>Código: {item.codigoSeguimiento}</ThemedText>
+              <ThemedText>Estado: {nombreEstado(item.estadoActual)}</ThemedText>
               <ThemedText>
-                Estado: {nombreEstado(item.estadoActual)}
+                {item.descripcionTexto || "Sin descripción escrita"}
               </ThemedText>
               <ThemedText>
-                {item.descripcionTexto || 'Sin descripción escrita'}
+                Zona: {item.zonaId} · {item.vecinosSumados} vecinos sumados
               </ThemedText>
-              <ThemedText>Zona: {item.zonaId}</ThemedText>
               <ThemedText style={styles.enlace}>
                 Abrir gestión del reporte →
               </ThemedText>
@@ -195,21 +207,21 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   botonEscanear: {
-    backgroundColor: '#246B45',
+    backgroundColor: "#246B45",
     paddingVertical: 15,
     paddingHorizontal: 18,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
     marginVertical: 10,
   },
   textoBotonEscanear: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: "#FFFFFF",
+    fontWeight: "bold",
     fontSize: 16,
   },
   filtros: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginVertical: 8,
   },
@@ -217,12 +229,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     borderRadius: 20,
   },
   filtroActivo: {
-    backgroundColor: '#DCEBFF',
-    borderColor: '#003785',
+    backgroundColor: "#DCEBFF",
+    borderColor: "#003785",
   },
   lista: {
     flex: 1,
@@ -236,26 +248,26 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#888888',
+    borderColor: "#888888",
     gap: 8,
   },
   centrado: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
     padding: 16,
   },
   boton: {
     padding: 10,
     borderRadius: 8,
-    backgroundColor: '#003785',
+    backgroundColor: "#003785",
   },
   textoBoton: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
   },
   enlace: {
     marginTop: 4,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
 });

@@ -25,6 +25,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
@@ -141,6 +142,54 @@ async function guardarArchivoLocal(
   return archivoDestino.uri;
 }
 
+// Gualeguaychú, Entre Ríos (centro de la ciudad): la API sólo acepta
+// reportes dentro de los polígonos de zona sembrados sobre esta ciudad.
+const CENTRO_GUALEGUAYCHU = { lat: -33.0094, lon: -58.518 };
+
+/** Mapa Leaflet para elegir el punto del reporte sin usar el GPS:
+    el toque vuelve como "latitud,longitud" por postMessage.
+    (react-native-maps queda negro en Expo Go sin API key de Google.) */
+const HTML_MAPA_SELECCION = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      html, body, #mapa { height: 100%; margin: 0; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="mapa"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+      var mapa = L.map("mapa").setView([${CENTRO_GUALEGUAYCHU.lat}, ${CENTRO_GUALEGUAYCHU.lon}], 15);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(mapa);
+
+      var pin = null;
+
+      mapa.on("click", function (e) {
+        window.ReactNativeWebView.postMessage(
+          e.latlng.lat + "," + e.latlng.lng
+        );
+      });
+
+      window.ponerPin = function (lat, lon) {
+        if (pin) mapa.removeLayer(pin);
+        pin = L.marker([lat, lon]).addTo(mapa);
+      };
+    </script>
+  </body>
+</html>`;
+
 export default function NuevoReporteScreen() {
   const parametros = useLocalSearchParams<{ id?: string | string[] }>();
   const idParametro = Array.isArray(parametros.id)
@@ -190,6 +239,7 @@ export default function NuevoReporteScreen() {
     longitude: number;
   } | null>(null);
 
+  const mapaSeleccionRef = useRef<WebView>(null);
   const [cargandoUbicacion, setCargandoUbicacion] = useState(false);
   const [direccion, setDireccion] = useState("");
   const [guardandoReporte, setGuardandoReporte] = useState(false);
@@ -470,83 +520,10 @@ export default function NuevoReporteScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
 
-      const latitud = ubicacion.coords.latitude;
-      const longitud = ubicacion.coords.longitude;
-
-      setCoordenadas({
-        latitude: latitud,
-        longitude: longitud,
-      });
-
-      try {
-        const direcciones = await Location.reverseGeocodeAsync({
-          latitude: latitud,
-          longitude: longitud,
-        });
-
-        if (direcciones.length > 0) {
-          const resultado = direcciones[0];
-
-          const partes = [
-            resultado.street,
-            resultado.streetNumber,
-            resultado.district,
-            resultado.city,
-            resultado.region,
-          ].filter(Boolean);
-
-          setDireccion(
-            partes.length > 0
-              ? partes.join(", ")
-              : "Dirección no disponible; se guardarán las coordenadas GPS.",
-          );
-        } else {
-          setDireccion(
-            "Dirección no disponible; se guardarán las coordenadas GPS.",
-          );
-        }
-      } catch (error) {
-        console.warn("No se pudo identificar la dirección:", error);
-        setDireccion(
-          "Dirección no disponible; se guardarán las coordenadas GPS.",
-        );
-      }
-
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      try {
-        const cercanos = await obtenerReportesCercanos(
-          ubicacion.coords.latitude,
-          ubicacion.coords.longitude,
-          50,
-        );
-
-        if (cercanos.length > 0) {
-          await Haptics.notificationAsync(
-            Haptics.NotificationFeedbackType.Warning,
-          );
-
-          const primero = cercanos[0];
-
-          Alert.alert(
-            "¿Es el mismo problema?",
-            `Ya ${cercanos.length === 1 ? "hay un reporte" : `hay ${cercanos.length} reportes`} a menos de 50 m: ${primero.tipo} en ${primero.direccionDescripcion}. Si es el mismo, podés sumarte en vez de crear otro.`,
-            [
-              {
-                text: "Ver ese reporte",
-                onPress: () =>
-                  router.push({
-                    pathname: "/reportes/[id]",
-                    params: { id: primero.id },
-                  }),
-              },
-              { text: "Es otro problema", style: "cancel" },
-            ],
-          );
-        }
-      } catch (e) {
-        console.warn("No se pudieron consultar reportes cercanos:", e);
-      }
+      await aplicarUbicacion(
+        ubicacion.coords.latitude,
+        ubicacion.coords.longitude,
+      );
     } catch (error) {
       console.error("Error al obtener la ubicación:", error);
 
@@ -557,6 +534,105 @@ export default function NuevoReporteScreen() {
     } finally {
       setCargandoUbicacion(false);
     }
+  };
+
+  /** Marca el punto elegido (por GPS o por toque en el mapa): completa la
+      dirección y avisa si ya hay reportes a menos de 50 m. */
+  const aplicarUbicacion = async (latitud: number, longitud: number) => {
+    setCoordenadas({
+      latitude: latitud,
+      longitude: longitud,
+    });
+
+    mapaSeleccionRef.current?.injectJavaScript(
+      `window.ponerPin(${latitud}, ${longitud}); true;`,
+    );
+
+    try {
+      const direcciones = await Location.reverseGeocodeAsync({
+        latitude: latitud,
+        longitude: longitud,
+      });
+
+      if (direcciones.length > 0) {
+        const resultado = direcciones[0];
+
+        const partes = [
+          resultado.street,
+          resultado.streetNumber,
+          resultado.district,
+          resultado.city,
+          resultado.region,
+        ].filter(Boolean);
+
+        setDireccion(
+          partes.length > 0
+            ? partes.join(", ")
+            : "Dirección no disponible; se guardarán las coordenadas.",
+        );
+      } else {
+        setDireccion("Dirección no disponible; se guardarán las coordenadas.");
+      }
+    } catch (error) {
+      // Sin permiso de ubicación el geocoder nativo falla (el punto se
+      // eligió tocando el mapa): consultamos Nominatim de OpenStreetMap.
+      console.warn("No se pudo identificar la dirección:", error);
+
+      try {
+        const respuesta = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${latitud}&lon=${longitud}&format=json`,
+          { headers: { "User-Agent": "reporte-ciudadano-app" } },
+        );
+        const datos = await respuesta.json();
+
+        setDireccion(
+          datos?.display_name ??
+            "Dirección no disponible; se guardarán las coordenadas.",
+        );
+      } catch {
+        setDireccion("Dirección no disponible; se guardarán las coordenadas.");
+      }
+    }
+
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    try {
+      const cercanos = await obtenerReportesCercanos(latitud, longitud, 50);
+
+      if (cercanos.length > 0) {
+        await Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Warning,
+        );
+
+        const primero = cercanos[0];
+
+        Alert.alert(
+          "¿Es el mismo problema?",
+          `Ya ${cercanos.length === 1 ? "hay un reporte" : `hay ${cercanos.length} reportes`} a menos de 50 m: ${primero.tipo} en ${primero.direccionDescripcion}. Si es el mismo, podés sumarte en vez de crear otro.`,
+          [
+            {
+              text: "Ver ese reporte",
+              onPress: () =>
+                router.push({
+                  pathname: "/reportes/[id]",
+                  params: { id: primero.id },
+                }),
+            },
+            { text: "Es otro problema", style: "cancel" },
+          ],
+        );
+      }
+    } catch (e) {
+      console.warn("No se pudieron consultar reportes cercanos:", e);
+    }
+  };
+
+  const manejarToqueMapa = (evento: { nativeEvent: { data: string } }) => {
+    const [lat, lon] = evento.nativeEvent.data.split(",").map(Number);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    void aplicarUbicacion(lat, lon);
   };
 
   const guardarNuevoReporte = async () => {
@@ -925,11 +1001,22 @@ export default function NuevoReporteScreen() {
           </ThemedText>
 
           <View style={styles.previewContainer}>
-            <ThemedText type="subtitle">Ubicación del dispositivo</ThemedText>
+            <ThemedText type="subtitle">Ubicación del reporte</ThemedText>
 
             <ThemedText>
-              Presioná el botón para obtener las coordenadas GPS actuales.
+              Tocá el mapa para marcar el punto del problema (la API sólo acepta
+              puntos dentro de Gualeguaychú) o usá tu GPS.
             </ThemedText>
+
+            <WebView
+              ref={mapaSeleccionRef}
+              style={styles.mapaSeleccion}
+              originWhitelist={["*"]}
+              source={{ html: HTML_MAPA_SELECCION }}
+              javaScriptEnabled
+              domStorageEnabled
+              onMessage={manejarToqueMapa}
+            />
 
             <Button
               title={
@@ -960,7 +1047,7 @@ export default function NuevoReporteScreen() {
                 <ThemedText type="subtitle">Dirección del problema</ThemedText>
 
                 <TextInput
-                  style= {[styles.descriptionInput, { color: colorTexto }]}
+                  style={[styles.descriptionInput, { color: colorTexto }]}
                   placeholder="Ej.: calle Urquiza 450, Gualeguaychú"
                   placeholderTextColor="#777777"
                   value={direccion}
@@ -1046,7 +1133,7 @@ export default function NuevoReporteScreen() {
           <ThemedText type="subtitle">Descripción *</ThemedText>
 
           <TextInput
-            style= {[styles.descriptionInput, { color: colorTexto }]}
+            style={[styles.descriptionInput, { color: colorTexto }]}
             placeholder="Describí el problema y dónde se encuentra..."
             placeholderTextColor="#777777"
             value={descripcion}
@@ -1382,6 +1469,11 @@ const styles = StyleSheet.create({
   counterText: {
     fontSize: 12,
     textAlign: "right",
+  },
+  mapaSeleccion: {
+    height: 280,
+    borderRadius: 12,
+    overflow: "hidden",
   },
   helpText: {
     fontSize: 13,
